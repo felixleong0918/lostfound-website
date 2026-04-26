@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>拾光 Finder Prototype</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">拾</div>
+        <div>
+          <h1>拾光 Finder</h1>
+          <p>校園失物智慧媒合平台</p>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-view="dashboard">總覽</button>
+        <button class="nav-item" data-view="lost">遺失物</button>
+        <button class="nav-item" data-view="found">拾獲物</button>
+        <button class="nav-item" data-view="publish">發布物品</button>
+        <button class="nav-item" data-view="matching">智慧媒合</button>
+        <button class="nav-item" data-view="notifications">通知中心</button>
+      </nav>
+
+      <div class="sidebar-card">
+        <h3>今日成效</h3>
+        <div class="mini-metric"><strong id="metric-total">12</strong><span>今日新增通報</span></div>
+        <div class="mini-metric"><strong id="metric-match">4</strong><span>新媒合案件</span></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h2 id="view-title">產品原型總覽</h2>
+          <p id="view-subtitle">這不是介紹頁，是可以操作的 high-fidelity prototype。</p>
+        </div>
+        <div class="topbar-actions">
+          <input id="globalSearch" type="text" placeholder="搜尋物品、地點、關鍵字..." />
+          <button class="primary-btn" id="quickPublishBtn">+ 快速發布</button>
+        </div>
+      </header>
+
+      <section class="view active" id="dashboard">
+        <div class="stats-grid">
+          <div class="stat-card"><span>遺失通報</span><strong id="lostCount">3</strong></div>
+          <div class="stat-card"><span>拾獲通報</span><strong id="foundCount">3</strong></div>
+          <div class="stat-card"><span>待確認媒合</span><strong id="matchCount">3</strong></div>
+          <div class="stat-card"><span>未讀通知</span><strong id="notificationCount">3</strong></div>
+        </div>
+
+        <div class="content-grid two-cols">
+          <section class="panel">
+            <div class="panel-head">
+              <h3>最新通報</h3>
+              <button class="ghost-btn" data-jump="publish">新增</button>
+            </div>
+            <div id="recentFeed" class="list-stack"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h3>高相似媒合</h3>
+              <button class="ghost-btn" data-jump="matching">查看全部</button>
+            </div>
+            <div id="topMatches" class="list-stack"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="lost">
+        <div class="panel">
+          <div class="panel-head wrap">
+            <h3>遺失物列表</h3>
+            <div class="filters">
+              <select id="lostCategoryFilter">
+                <option value="all">全部類型</option>
+                <option value="電子產品">電子產品</option>
+                <option value="證件">證件</option>
+                <option value="日用品">日用品</option>
+                <option value="配件">配件</option>
+              </select>
+            </div>
+          </div>
+          <div id="lostList" class="card-grid"></div>
+        </div>
+      </section>
+
+      <section class="view" id="found">
+        <div class="panel">
+          <div class="panel-head wrap">
+            <h3>拾獲物列表</h3>
+            <div class="filters">
+              <select id="foundCategoryFilter">
+                <option value="all">全部類型</option>
+                <option value="電子產品">電子產品</option>
+                <option value="證件">證件</option>
+                <option value="日用品">日用品</option>
+                <option value="配件">配件</option>
+              </select>
+            </div>
+          </div>
+          <div id="foundList" class="card-grid"></div>
+        </div>
+      </section>
+
+      <section class="view" id="publish">
+        <div class="content-grid form-layout">
+          <section class="panel">
+            <div class="panel-head">
+              <h3>發布新通報</h3>
+              <span>模擬使用者送出遺失 / 拾獲物資訊</span>
+            </div>
+            <form id="publishForm" class="form-grid">
+              <label>
+                <span>通報類型</span>
+                <select name="type" required>
+                  <option value="lost">我遺失了</option>
+                  <option value="found">我撿到了</option>
+                </select>
+              </label>
+              <label>
+                <span>物品名稱</span>
+                <input name="title" type="text" placeholder="例如：黑色 AirPods Pro" required />
+              </label>
+              <label>
+                <span>類型</span>
+                <select name="category" required>
+                  <option value="電子產品">電子產品</option>
+                  <option value="證件">證件</option>
+                  <option value="日用品">日用品</option>
+                  <option value="配件">配件</option>
+                </select>
+              </label>
+              <label>
+                <span>地點</span>
+                <input name="location" type="text" placeholder="例如：總圖 2F、自習室外" required />
+              </label>
+              <label>
+                <span>日期時間</span>
+                <input name="datetime" type="datetime-local" required />
+              </label>
+              <label>
+                <span>聯絡方式</span>
+                <input name="contact" type="text" placeholder="Email / IG / 電話" required />
+              </label>
+              <label class="full-width">
+                <span>描述</span>
+                <textarea name="description" rows="5" placeholder="例如：黑色保護殼、有貼白色貼紙、可能掉在圖書館..." required></textarea>
+              </label>
+              <label class="full-width">
+                <span>圖片</span>
+                <select name="emoji">
+                  <option value="🎧">🎧 耳機</option>
+                  <option value="🪪">🪪 證件</option>
+                  <option value="🍼">🍼 水壺</option>
+                  <option value="☂️">☂️ 雨傘</option>
+                  <option value="🎒">🎒 背包</option>
+                  <option value="📱">📱 手機</option>
+                </select>
+              </label>
+              <div class="form-actions full-width">
+                <button type="submit" class="primary-btn">送出通報</button>
+                <button type="button" class="ghost-btn" id="fillDemoBtn">填入範例</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h3>即時預覽</h3>
+              <span>送出後會同步進入列表並自動媒合</span>
+            </div>
+            <div id="previewCard" class="preview-card empty">
+              <p>尚未建立預覽內容</p>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="matching">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>智慧媒合結果</h3>
+            <span>依據類型、地點、時間、關鍵字相似度計算</span>
+          </div>
+          <div id="matchingList" class="list-stack"></div>
+        </div>
+      </section>
+
+      <section class="view" id="notifications">
+        <div class="panel">
+          <div class="panel-head">
+ </div>           <h3>通知中心</h3>
+            <button class="ghost-btn" id="markAllReadBtn">全部標記已讀</button>
+          </div>
+          <div id="notificationList" class="list-stack"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
