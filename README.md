@@ -122,6 +122,57 @@ python3 app.py
 
 如果沒有設定 SMTP，信件內容會先寫到 `mail.log`。
 
+## GitHub Pages 注意事項
+
+GitHub Pages 只能部署靜態檔案，例如：
+
+- `index.html`
+- `styles.css`
+- `script.js`
+- 圖片與其他前端素材
+
+它不會執行 `app.py`，也不會啟動 `Flask` server、SQLite database、session 或任何 Python API。
+
+所以如果直接把這個 repo push 到 GitHub Pages，頁面雖然可以打開，但登入、註冊、送出遺失物等功能會出現 `Request failed`。原因是前端目前會呼叫：
+
+```text
+POST /api/login
+POST /api/register
+POST /api/lost-reports
+```
+
+本機開發時，這些 request 會送到正在執行的 Flask server：
+
+```text
+http://127.0.0.1:8000/api/login
+```
+
+但在 GitHub Pages 上，瀏覽器會改成打 GitHub Pages 的網址，例如：
+
+```text
+https://<username>.github.io/api/login
+```
+
+或 project site 底下的 Pages 網址。GitHub Pages 並沒有這些 API route，因此 request 會失敗。
+
+如果要讓 GitHub Pages 可以展示完整流程，有兩種做法：
+
+1. 改成純前端 demo mode：使用 `localStorage` 儲存假登入狀態與展示資料，不呼叫 Flask API。
+2. 保留真實後端：把 Flask API 另外部署到 Render / Railway / Fly.io，再把 `script.js` 的 API base URL 改成正式後端網址。
+
+目前完整功能請用本機方式執行：
+
+```bash
+cd /Users/felix/.openclaw/workspace/lostfound-website
+task up
+```
+
+然後開：
+
+```text
+http://127.0.0.1:8000
+```
+
 ## 部署到 Vercel
 
 如果你們之後把前端部署到 Vercel，要注意：
