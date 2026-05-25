@@ -1,0 +1,5 @@
+.venv
+lostfound.db
+mail.log
+__pycache__
+*.pyc

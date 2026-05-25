@@ -1,0 +1,50 @@
+version: '3'
+
+tasks:
+  cleanup:
+    desc: Stop local server on the configured frontend port
+    cmds:
+    - |
+      PORT="{{default "8000" .PORT}}"
+      pids=$(lsof -t -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | tr '\n' ' ')
+      if [ -n "$pids" ]; then
+        echo "Stopping processes on port: $PORT"
+        /bin/kill $pids
+      else
+        echo "No listening process found on port: $PORT"
+      fi
+
+  serve:
+    desc: Run the Flask application
+    cmds:
+    - |
+      PORT="{{default "8000" .PORT}}"
+      HOST="{{default "127.0.0.1" .HOST}}"
+      echo "Serving NTU Lost ETL Hub at http://$HOST:$PORT"
+      python3 app.py
+
+  up:
+    desc: Cleanup the frontend port then start the local server
+    cmds:
+    - task: cleanup
+    - task: serve
+
+  down:
+    desc: Stop the local frontend server
+    cmds:
+    - task: cleanup
+
+  open:
+    desc: Open the frontend in the browser
+    cmds:
+    - |
+      PORT="{{default "8000" .PORT}}"
+      HOST="{{default "127.0.0.1" .HOST}}"
+      open "http://$HOST:$PORT"
+
+  reset-demo:
+    desc: Reset browser-side cached data instructions
+    cmds:
+    - |
+      echo "Browser-side cached UI state can be cleared in DevTools -> Application -> Local Storage."
+      echo "Server-side records live in lostfound.db."

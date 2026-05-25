@@ -1,305 +1,318 @@
-const state = {
-  items: [
-    {
-      id: 1,
-      type: 'lost',
-      title: '黑色 AirPods Pro',
-      category: '電子產品',
-      location: '總圖 2F',
-      datetime: '2026-03-23T10:20',
-      contact: 'b11902001@ntu.edu.tw',
-      description: '黑色保護殼，外殼有白色貼紙，可能掉在座位附近。',
-      emoji: '🎧'
-    },
-    {
-      id: 2,
-      type: 'found',
-      title: 'AirPods Pro 耳機',
-      category: '電子產品',
-      location: '總圖 1F 服務台附近',
-      datetime: '2026-03-23T11:05',
-      contact: 'library-desk@ntu.edu.tw',
-      description: '拾獲一副耳機，黑色殼，外側有貼紙。',
-      emoji: '🎧'
-    },
-    {
-      id: 3,
-      type: 'lost',
-      title: '學生證',
-      category: '證件',
-      location: '管理學院',
-      datetime: '2026-03-22T16:10',
-      contact: 'r12922033@ntu.edu.tw',
-      description: '台大學生證，姓名可現場核對。',
-      emoji: '🪪'
-    },
-    {
-      id: 4,
-      type: 'found',
-      title: '學生證（管院）',
-      category: '證件',
-      location: '管理學院 1F',
-      datetime: '2026-03-22T17:10',
-      contact: 'mba-office@ntu.edu.tw',
-      description: '在管理學院一樓撿到學生證一張。',
-      emoji: '🪪'
-    },
-    {
-      id: 5,
-      type: 'found',
-      title: '藍色水壺',
-      category: '日用品',
-      location: '活大前草地',
-      datetime: '2026-03-23T12:05',
-      contact: 'student-a@ntu.edu.tw',
-      description: '藍色金屬水壺，外觀有些刮痕。',
-      emoji: '🍼'
-    },
-    {
-      id: 6,
-      type: 'lost',
-      title: '灰色雨傘',
-      category: '日用品',
-      location: '普通教學館',
-      datetime: '2026-03-21T18:40',
-      contact: 'student-b@ntu.edu.tw',
-      description: '灰色長傘，木頭握把。',
-      emoji: '☂️'
-    }
-  ],
-  notifications: [
-    { id: 1, text: '你的「黑色 AirPods Pro」有新的可能匹配項目。', unread: true },
-    { id: 2, text: '管理學院附近新增一筆學生證拾獲通報。', unread: true },
-    { id: 3, text: '系統已完成今日自動媒合更新。', unread: true }
-  ]
+const appState = {
+  session: null,
+  externalItems: [],
+  reports: [],
+  matches: [],
+  notifications: []
 };
 
-const views = document.querySelectorAll('.view');
+const authScreen = document.getElementById('authScreen');
+const appScreen = document.getElementById('appScreen');
+const authAlert = document.getElementById('authAlert');
+const viewTitle = document.getElementById('viewTitle');
+const viewSubtitle = document.getElementById('viewSubtitle');
 const navItems = document.querySelectorAll('.nav-item');
+const views = document.querySelectorAll('.view');
+const authTabs = document.querySelectorAll('.auth-tab');
+const authForms = document.querySelectorAll('.auth-form');
+
 const titleMap = {
-  dashboard: ['產品原型總覽'],
-  lost: ['遺失物管理', '查看遺失通報、搜尋與篩選。'],
-  found: ['拾獲物管理', '查看拾獲通報與待認領物品。'],
-  publish: ['發布物品', '模擬使用者新增失物 / 拾獲資料。'],
-  matching: ['智慧媒合', '自動比對遺失與拾獲紀錄。'],
-  notifications: ['通知中心', '集中顯示媒合提醒與系統通知。']
+  dashboard: ['首頁', '查看最新招領、你的通報與通知。'],
+  sources: ['招領清單', '找到疑似物品後，請依來源資訊前往認領。'],
+  report: ['通報遺失物', '留下物品特徵、時間與地點，方便後續比對。'],
+  matches: ['可能符合的物品', '這裡會列出和你的通報相近的招領物。'],
+  notifications: ['通知紀錄', '查看近期通知與處理狀態。']
 };
+
+function showBanner(message, kind = 'info') {
+  authAlert.className = `status-banner ${kind}`;
+  authAlert.textContent = message;
+}
+
+function hideBanner() {
+  authAlert.className = 'status-banner hidden';
+  authAlert.textContent = '';
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    },
+    ...options
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Request failed');
+  }
+  return payload;
+}
+
+function switchAuthTab(tab) {
+  authTabs.forEach((button) => button.classList.toggle('active', button.dataset.authTab === tab));
+  authForms.forEach((form) => form.classList.toggle('active', form.id === `${tab}Form`));
+  hideBanner();
+}
 
 function switchView(viewId) {
-  views.forEach(v => v.classList.toggle('active', v.id === viewId));
-  navItems.forEach(btn => btn.classList.toggle('active', btn.dataset.view === viewId));
-  document.getElementById('view-title').textContent = titleMap[viewId][0];
-  document.getElementById('view-subtitle').textContent = titleMap[viewId][1];
+  navItems.forEach((button) => button.classList.toggle('active', button.dataset.view === viewId));
+  views.forEach((view) => view.classList.toggle('active', view.id === viewId));
+  viewTitle.textContent = titleMap[viewId][0];
+  viewSubtitle.textContent = titleMap[viewId][1];
 }
-
-navItems.forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
-document.querySelectorAll('[data-jump]').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.jump)));
-document.getElementById('quickPublishBtn').addEventListener('click', () => switchView('publish'));
 
 function formatTime(value) {
-  return new Date(value).toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return new Date(value).toLocaleString('zh-TW', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
-function typeLabel(type) {
-  return type === 'lost' ? '遺失物' : '拾獲物';
+function sourceMeta(item) {
+  if (item.source_type === 'facebook') {
+    return `<a href="${item.source_url}" target="_blank" rel="noreferrer">FB交流版連結</a>`;
+  }
+  return item.source_name;
 }
 
-function itemCard(item) {
+function renderExternalItem(item) {
   return `
     <article class="item-card">
-      <div class="emoji-box">${item.emoji}</div>
-      <div class="item-content">
-        <div class="item-title-row">
-          <h4>${item.title}</h4>
-          <span class="tag ${item.type}">${typeLabel(item.type)}</span>
-        </div>
-        <div class="item-meta">${item.category} ・ ${item.location} ・ ${formatTime(item.datetime)}</div>
-        <p>${item.description}</p>
-        <div class="item-meta">聯絡方式：${item.contact}</div>
+      <div class="card-badge">${item.category}</div>
+      <h4>${item.title}</h4>
+      <div class="item-meta">${item.location} ・ ${formatTime(item.found_at)}</div>
+      <p>${item.description}</p>
+      <div class="source-line">
+        <span>來源</span>
+        <strong>${item.source_name}</strong>
       </div>
+      <div class="item-meta">${sourceMeta(item)}</div>
     </article>
   `;
 }
 
-function renderLists() {
-  const lostFilter = document.getElementById('lostCategoryFilter').value;
-  const foundFilter = document.getElementById('foundCategoryFilter').value;
-  const keyword = document.getElementById('globalSearch').value.trim().toLowerCase();
-
-  const matchesKeyword = (item) => {
-    if (!keyword) return true;
-    return [item.title, item.location, item.description, item.category].join(' ').toLowerCase().includes(keyword);
-  };
-
-  const lostItems = state.items.filter(i => i.type === 'lost' && (lostFilter === 'all' || i.category === lostFilter) && matchesKeyword(i));
-  const foundItems = state.items.filter(i => i.type === 'found' && (foundFilter === 'all' || i.category === foundFilter) && matchesKeyword(i));
-
-  document.getElementById('lostList').innerHTML = lostItems.map(itemCard).join('') || '<div class="panel">查無資料</div>';
-  document.getElementById('foundList').innerHTML = foundItems.map(itemCard).join('') || '<div class="panel">查無資料</div>';
-
-  const recent = [...state.items].sort((a, b) => new Date(b.datetime) - new Date(a.datetime)).slice(0, 5);
-  document.getElementById('recentFeed').innerHTML = recent.map(item => `
+function renderReport(report) {
+  return `
     <div class="feed-item">
       <div class="feed-head">
-        <strong>${item.title}</strong>
-        <span class="tag ${item.type}">${typeLabel(item.type)}</span>
+        <strong>${report.title}</strong>
+        <span class="chip">已通報</span>
       </div>
-      <div class="feed-meta">${item.location} ・ ${formatTime(item.datetime)}</div>
+      <div class="item-meta">${report.category} ・ ${report.location} ・ ${formatTime(report.lost_at)}</div>
+      <p>${report.description}</p>
     </div>
-  `).join('');
-
-  document.getElementById('lostCount').textContent = state.items.filter(i => i.type === 'lost').length;
-  document.getElementById('foundCount').textContent = state.items.filter(i => i.type === 'found').length;
-  document.getElementById('metric-total').textContent = state.items.length;
+  `;
 }
 
-function similarityScore(a, b) {
-  let score = 0;
-  const reasons = [];
-
-  if (a.category === b.category) {
-    score += 35;
-    reasons.push('類型相符');
-  }
-
-  const locA = a.location.toLowerCase();
-  const locB = b.location.toLowerCase();
-  if (locA.includes(locB.slice(0, 2)) || locB.includes(locA.slice(0, 2))) {
-    score += 20;
-    reasons.push('地點接近');
-  }
-
-  const timeDiff = Math.abs(new Date(a.datetime) - new Date(b.datetime)) / (1000 * 60 * 60);
-  if (timeDiff <= 4) {
-    score += 20;
-    reasons.push('時間接近');
-  } else if (timeDiff <= 24) {
-    score += 10;
-    reasons.push('時間合理');
-  }
-
-  const keywordsA = (a.title + ' ' + a.description).toLowerCase();
-  const keywordsB = (b.title + ' ' + b.description).toLowerCase();
-  const shared = ['airpods', '黑色', '學生證', '水壺', '雨傘', '貼紙', '背包'].filter(k => keywordsA.includes(k) && keywordsB.includes(k));
-  if (shared.length) {
-    score += Math.min(25, shared.length * 8);
-    reasons.push(`關鍵字相似：${shared.join('、')}`);
-  }
-
-  return { score: Math.min(score, 99), reasons };
+function renderMatch(match) {
+  const reasonList = JSON.parse(match.reasons_json || '[]');
+  return `
+    <div class="match-item">
+      <div class="feed-head">
+        <div>
+          <strong>${match.report_title}</strong>
+          <div class="item-meta">對應招領物：${match.external_title}</div>
+        </div>
+        <span class="score">${match.score}%</span>
+      </div>
+      <div class="item-meta">${match.external_location} ・ ${match.external_source_name}</div>
+      <ul class="match-reasons">
+        ${reasonList.map((reason) => `<li>${reason}</li>`).join('')}
+      </ul>
+      <div class="match-link">${match.external_source_type === 'facebook' ? `<a href="${match.external_source_url}" target="_blank" rel="noreferrer">查看原始貼文</a>` : `來源：${match.external_source_name}`}</div>
+    </div>
+  `;
 }
 
-function buildMatches() {
-  const lost = state.items.filter(i => i.type === 'lost');
-  const found = state.items.filter(i => i.type === 'found');
-  const result = [];
+function renderNotification(notification) {
+  return `
+    <div class="notify-item ${notification.is_read ? 'read' : 'unread'}">
+      <strong>${notification.subject}</strong>
+      <div class="notify-meta">${notification.message}</div>
+      <div class="notify-meta">${formatTime(notification.created_at)}</div>
+    </div>
+  `;
+}
 
-  lost.forEach(l => {
-    found.forEach(f => {
-      const match = similarityScore(l, f);
-      if (match.score >= 45) {
-        result.push({ lost: l, found: f, ...match });
-      }
-    });
+function applyFilters() {
+  const keyword = document.getElementById('globalSearch').value.trim().toLowerCase();
+  const source = document.getElementById('sourceFilter')?.value || 'all';
+  const category = document.getElementById('categoryFilter')?.value || 'all';
+
+  const filtered = appState.externalItems.filter((item) => {
+    const matchesKeyword = !keyword || [item.title, item.location, item.description, item.source_name, item.category]
+      .join(' ')
+      .toLowerCase()
+      .includes(keyword);
+    const matchesSource = source === 'all' || item.source_name === source;
+    const matchesCategory = category === 'all' || item.category === category;
+    return matchesKeyword && matchesSource && matchesCategory;
   });
 
-  return result.sort((a, b) => b.score - a.score);
+  document.getElementById('externalList').innerHTML = filtered.map(renderExternalItem).join('') || '<div class="empty-state">目前沒有符合條件的招領資料。</div>';
+  document.getElementById('recentExternalList').innerHTML = filtered.slice(0, 4).map(renderExternalItem).join('') || '<div class="empty-state">目前沒有資料。</div>';
+}
+
+function renderSummary() {
+  const summaryMap = appState.externalItems.reduce((accumulator, item) => {
+    accumulator[item.source_name] = (accumulator[item.source_name] || 0) + 1;
+    return accumulator;
+  }, {});
+
+  document.getElementById('sourceSummary').innerHTML = Object.entries(summaryMap).map(([name, count]) => `
+    <div class="summary-card">
+      <span>${name}</span>
+      <strong>${count}</strong>
+    </div>
+  `).join('');
+}
+
+function renderReports() {
+  document.getElementById('reportList').innerHTML = appState.reports.map(renderReport).join('') || '<div class="empty-state">你還沒有遺失通報。</div>';
 }
 
 function renderMatches() {
-  const matches = buildMatches();
-  document.getElementById('matchCount').textContent = matches.length;
-  document.getElementById('metric-match').textContent = matches.length;
-
-  const html = matches.map(match => `
-    <div class="match-item">
-      <div class="match-head">
-        <strong>${match.lost.title}</strong>
-        <span class="score">${match.score}% Match</span>
-      </div>
-      <div class="feed-meta">遺失：${match.lost.location} ・ 拾獲：${match.found.location}</div>
-      <div class="feed-meta">可能對應拾獲物：${match.found.title}</div>
-      <ul class="match-reasons">
-        ${match.reasons.map(r => `<li>${r}</li>`).join('')}
-      </ul>
-    </div>
-  `).join('');
-
-  document.getElementById('matchingList').innerHTML = html || '<div class="feed-item">目前沒有可顯示的媒合結果。</div>';
-  document.getElementById('topMatches').innerHTML = matches.slice(0, 3).map(match => `
-    <div class="match-item">
-      <div class="match-head">
-        <strong>${match.lost.title}</strong>
-        <span class="score">${match.score}%</span>
-      </div>
-      <div class="feed-meta">${match.found.title} ・ ${match.found.location}</div>
-    </div>
-  `).join('') || '<div class="feed-item">暫無媒合</div>';
+  document.getElementById('matchList').innerHTML = appState.matches.map(renderMatch).join('') || '<div class="empty-state">目前還沒有媒合結果。</div>';
+  document.getElementById('recentMatchList').innerHTML = appState.matches.slice(0, 3).map(renderMatch).join('') || '<div class="empty-state">目前沒有最新媒合。</div>';
 }
 
 function renderNotifications() {
-  document.getElementById('notificationCount').textContent = state.notifications.filter(n => n.unread).length;
-  document.getElementById('notificationList').innerHTML = state.notifications.map(n => `
-    <div class="notify-item ${n.unread ? 'unread' : 'read'}">
-      <strong>${n.unread ? '新通知' : '已讀通知'}</strong>
-      <div class="notify-meta">${n.text}</div>
-    </div>
-  `).join('');
+  document.getElementById('notificationList').innerHTML = appState.notifications.map(renderNotification).join('') || '<div class="empty-state">目前沒有通知。</div>';
 }
 
-function updatePreview(formData) {
-  const preview = document.getElementById('previewCard');
-  preview.classList.remove('empty');
-  preview.innerHTML = itemCard(formData);
+function renderMetrics() {
+  document.getElementById('externalCount').textContent = appState.externalItems.length;
+  document.getElementById('reportCount').textContent = appState.reports.length;
+  document.getElementById('matchCount').textContent = appState.matches.length;
+  document.getElementById('notificationCount').textContent = appState.notifications.filter((item) => !item.is_read).length;
+  document.getElementById('userGreeting').textContent = `${appState.session.name}，${appState.session.email}`;
 }
-
-const form = document.getElementById('publishForm');
-form.addEventListener('input', () => {
-  const formData = Object.fromEntries(new FormData(form).entries());
-  if (formData.title && formData.location && formData.description) updatePreview(formData);
-});
-
-form.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const formData = Object.fromEntries(new FormData(form).entries());
-  const newItem = { ...formData, id: Date.now() };
-  state.items.unshift(newItem);
-  state.notifications.unshift({
-    id: Date.now() + 1,
-    text: `已新增一筆${newItem.type === 'lost' ? '遺失' : '拾獲'}通報：「${newItem.title}」。系統已開始媒合。`,
-    unread: true
-  });
-  renderAll();
-  updatePreview(newItem);
-  form.reset();
-  switchView('matching');
-});
-
-document.getElementById('fillDemoBtn').addEventListener('click', () => {
-  form.type.value = 'lost';
-  form.title.value = '黑色皮夾';
-  form.category.value = '配件';
-  form.location.value = '小福 2F';
-  form.datetime.value = '2026-03-23T13:30';
-  form.contact.value = 'demo@ntu.edu.tw';
-  form.description.value = '黑色短夾，裡面有學生證與悠遊卡。';
-  form.emoji.value = '🎒';
-  updatePreview(Object.fromEntries(new FormData(form).entries()));
-});
-
-document.getElementById('markAllReadBtn').addEventListener('click', () => {
-  state.notifications = state.notifications.map(n => ({ ...n, unread: false }));
-  renderNotifications();
-});
-
-document.getElementById('lostCategoryFilter').addEventListener('change', renderLists);
-document.getElementById('foundCategoryFilter').addEventListener('change', renderLists);
-document.getElementById('globalSearch').addEventListener('input', renderLists);
 
 function renderAll() {
-  renderLists();
+  renderMetrics();
+  renderSummary();
+  applyFilters();
+  renderReports();
   renderMatches();
   renderNotifications();
 }
 
-renderAll();
+async function loadBundle() {
+  const payload = await api('/api/bootstrap');
+  appState.externalItems = payload.external_items;
+  appState.reports = payload.reports;
+  appState.matches = payload.matches;
+  appState.notifications = payload.notifications;
+  renderAll();
+}
+
+async function enterApp(sessionUser) {
+  appState.session = sessionUser;
+  authScreen.classList.add('hidden');
+  appScreen.classList.remove('hidden');
+  await loadBundle();
+}
+
+async function restoreSession() {
+  try {
+    const sessionPayload = await api('/api/session');
+    await enterApp(sessionPayload.user);
+  } catch (_error) {
+    authScreen.classList.remove('hidden');
+    appScreen.classList.add('hidden');
+  }
+}
+
+authTabs.forEach((button) => {
+  button.addEventListener('click', () => switchAuthTab(button.dataset.authTab));
+});
+
+navItems.forEach((button) => {
+  button.addEventListener('click', () => switchView(button.dataset.view));
+});
+
+document.querySelectorAll('[data-jump]').forEach((button) => {
+  button.addEventListener('click', () => switchView(button.dataset.jump));
+});
+
+document.getElementById('jumpReportBtn').addEventListener('click', () => switchView('report'));
+
+document.getElementById('loginForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const formData = Object.fromEntries(new FormData(event.target).entries());
+  try {
+    const payload = await api('/api/login', {
+      method: 'POST',
+      body: JSON.stringify(formData)
+    });
+    await enterApp(payload.user);
+  } catch (error) {
+    showBanner(error.message, 'error');
+  }
+});
+
+document.getElementById('registerForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const formData = Object.fromEntries(new FormData(event.target).entries());
+  try {
+    const payload = await api('/api/register', {
+      method: 'POST',
+      body: JSON.stringify(formData)
+    });
+    await enterApp(payload.user);
+  } catch (error) {
+    showBanner(error.message, 'error');
+  }
+});
+
+document.getElementById('reportForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const formData = Object.fromEntries(new FormData(event.target).entries());
+  try {
+    const payload = await api('/api/report-lost', {
+      method: 'POST',
+      body: JSON.stringify(formData)
+    });
+    appState.reports = payload.reports;
+    appState.matches = payload.matches;
+    appState.notifications = payload.notifications;
+    renderAll();
+    event.target.reset();
+    switchView('matches');
+  } catch (error) {
+    window.alert(error.message);
+  }
+});
+
+document.getElementById('fillSuggestedBtn').addEventListener('click', () => {
+  const form = document.getElementById('reportForm');
+  form.title.value = '黑色 AirPods Pro';
+  form.category.value = '電子產品';
+  form.location.value = '總圖 2F 靠窗座位';
+  form.lost_at.value = '2026-05-25T14:10';
+  form.description.value = '黑色保護殼，殼上有白色貼紙，應該是放在插座附近。';
+});
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await api('/api/logout', { method: 'POST' });
+  window.location.reload();
+});
+
+document.getElementById('markReadBtn').addEventListener('click', async () => {
+  const payload = await api('/api/notifications/read-all', { method: 'POST' });
+  appState.notifications = payload.notifications;
+  renderAll();
+});
+
+document.getElementById('globalSearch').addEventListener('input', applyFilters);
+document.addEventListener('change', (event) => {
+  if (event.target.id === 'sourceFilter' || event.target.id === 'categoryFilter') {
+    applyFilters();
+  }
+});
+
+restoreSession();

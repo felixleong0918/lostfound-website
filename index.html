@@ -3,127 +3,217 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>台大校園失物智慧媒合平台</title>
+  <title>台大失物招領</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-logo">失</div>
-        <div>
-          <h1>台大校園失物智慧媒合平台</h1>
+  <div class="page-glow page-glow-a"></div>
+  <div class="page-glow page-glow-b"></div>
+
+  <section id="authScreen" class="auth-shell">
+    <div class="auth-panel intro-panel">
+      <p class="eyebrow">NTU LOST & FOUND</p>
+      <h1>台大失物招領</h1>
+      <p class="intro-copy">
+        找不到東西時，先查招領清單；還沒出現的話，留下遺失資訊，我們會在有相近物品時通知你。
+      </p>
+      <div class="bullet-stack">
+        <div class="mini-card">
+          <strong>先找找看</strong>
+          <span>查看目前校內常見管道整理出的招領資訊。</span>
         </div>
+        <div class="mini-card">
+          <strong>留下聯絡方式</strong>
+          <span>登入後可通報遺失物，後續通知會寄到你的台大信箱。</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="auth-panel form-panel">
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-auth-tab="login">登入</button>
+        <button class="auth-tab" data-auth-tab="register">註冊</button>
+      </div>
+
+      <div id="authAlert" class="status-banner hidden"></div>
+
+      <form id="loginForm" class="auth-form active">
+        <h2>登入</h2>
+        <p class="form-note">使用台大信箱登入，查看你的通報與通知。</p>
+        <label>
+          <span>NTU Email</span>
+          <input name="email" type="email" placeholder="example@ntu.edu.tw" required />
+        </label>
+        <label>
+          <span>密碼</span>
+          <input name="password" type="password" placeholder="至少 8 碼" required />
+        </label>
+        <button type="submit" class="primary-btn">登入</button>
+      </form>
+
+      <form id="registerForm" class="auth-form">
+        <h2>建立帳號</h2>
+        <p class="form-note">請使用 @ntu.edu.tw 信箱建立帳號。</p>
+        <label>
+          <span>姓名</span>
+          <input name="name" type="text" placeholder="請輸入姓名" required />
+        </label>
+        <label>
+          <span>NTU Email</span>
+          <input name="email" type="email" placeholder="example@ntu.edu.tw" required />
+        </label>
+        <label>
+          <span>密碼</span>
+          <input name="password" type="password" placeholder="至少 8 碼" required />
+        </label>
+        <button type="submit" class="primary-btn">註冊</button>
+      </form>
+    </div>
+  </section>
+
+  <section id="appScreen" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand-block">
+        <p class="eyebrow">NTU LOST & FOUND</p>
+        <h2>台大失物招領</h2>
+        <p id="userGreeting" class="muted-text"></p>
       </div>
 
       <nav class="nav">
         <button class="nav-item active" data-view="dashboard">總覽</button>
-        <button class="nav-item" data-view="lost">遺失物</button>
-        <button class="nav-item" data-view="found">拾獲物</button>
-        <button class="nav-item" data-view="publish">發布物品</button>
-        <button class="nav-item" data-view="matching">智慧媒合</button>
-        <button class="nav-item" data-view="notifications">通知中心</button>
+        <button class="nav-item" data-view="sources">招領名單</button>
+        <button class="nav-item" data-view="report">通報遺失物</button>
+        <button class="nav-item" data-view="matches">媒合結果</button>
+        <button class="nav-item" data-view="notifications">通知紀錄</button>
       </nav>
 
       <div class="sidebar-card">
-        <h3>今日成效</h3>
-        <div class="mini-metric"><strong id="metric-total">12</strong><span>今日新增通報</span></div>
-        <div class="mini-metric"><strong id="metric-match">4</strong><span>新媒合案件</span></div>
+        <span>提醒</span>
+        <strong>資料越具體，越容易找回</strong>
+        <p>通報時請寫清楚時間、地點、外觀特徵，避免只填「錢包」或「耳機」。</p>
       </div>
+
+      <button id="logoutBtn" class="ghost-btn full-btn">登出</button>
     </aside>
 
     <main class="main">
       <header class="topbar">
         <div>
-          <h2 id="view-title">產品原型總覽</h2>
+          <p class="eyebrow">LOST & FOUND</p>
+          <h1 id="viewTitle">首頁</h1>
+          <p id="viewSubtitle" class="muted-text">查看最新招領、你的通報與通知。</p>
         </div>
         <div class="topbar-actions">
-          <input id="globalSearch" type="text" placeholder="搜尋物品、地點、關鍵字..." />
-          <button class="primary-btn" id="quickPublishBtn">+ 快速發布</button>
+          <input id="globalSearch" type="text" placeholder="搜尋物品、地點、來源..." />
+          <button id="jumpReportBtn" class="primary-btn">通報遺失物</button>
         </div>
       </header>
 
-      <section class="view active" id="dashboard">
+      <section id="dashboard" class="view active">
         <div class="stats-grid">
-          <div class="stat-card"><span>遺失通報</span><strong id="lostCount">3</strong></div>
-          <div class="stat-card"><span>拾獲通報</span><strong id="foundCount">3</strong></div>
-          <div class="stat-card"><span>待確認媒合</span><strong id="matchCount">3</strong></div>
-          <div class="stat-card"><span>未讀通知</span><strong id="notificationCount">3</strong></div>
+          <article class="stat-card">
+            <span>招領物品</span>
+            <strong id="externalCount">0</strong>
+          </article>
+          <article class="stat-card">
+            <span>我的通報</span>
+            <strong id="reportCount">0</strong>
+          </article>
+          <article class="stat-card">
+            <span>可能符合</span>
+            <strong id="matchCount">0</strong>
+          </article>
+          <article class="stat-card">
+            <span>未讀通知</span>
+            <strong id="notificationCount">0</strong>
+          </article>
         </div>
 
-        <div class="content-grid two-cols">
-          <section class="panel">
-            <div class="panel-head">
-              <h3>最新通報</h3>
-              <button class="ghost-btn" data-jump="publish">新增</button>
+        <div class="hero-grid">
+          <section class="panel accent-panel">
+            <p class="eyebrow">QUICK ACTION</p>
+            <h3>遺失物品了嗎？</h3>
+            <p>
+              先用上方搜尋列找物品名稱、地點或特徵。如果沒有看到符合的項目，就建立一筆遺失通報。
+            </p>
+            <p>
+              有新的可能招領物出現時，你會在媒合結果和通知紀錄中看到更新。
+            </p>
+            <div class="quick-actions">
+              <button class="primary-btn" data-jump="report">建立遺失通報</button>
+              <button class="ghost-btn" data-jump="sources">查看招領清單</button>
             </div>
-            <div id="recentFeed" class="list-stack"></div>
           </section>
 
           <section class="panel">
             <div class="panel-head">
-              <h3>高相似媒合</h3>
-              <button class="ghost-btn" data-jump="matching">查看全部</button>
+              <h3>招領來源</h3>
+              <span>目前清單中的資料來源</span>
             </div>
-            <div id="topMatches" class="list-stack"></div>
+            <div id="sourceSummary" class="summary-grid"></div>
+          </section>
+        </div>
+
+        <div class="content-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <h3>最新招領名單</h3>
+              <button class="ghost-btn" data-jump="sources">查看全部</button>
+            </div>
+            <div id="recentExternalList" class="list-stack"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h3>最近媒合結果</h3>
+              <button class="ghost-btn" data-jump="matches">查看全部</button>
+            </div>
+            <div id="recentMatchList" class="list-stack"></div>
           </section>
         </div>
       </section>
 
-      <section class="view" id="lost">
-        <div class="panel">
+      <section id="sources" class="view">
+        <section class="panel">
           <div class="panel-head wrap">
-            <h3>遺失物列表</h3>
+            <div>
+              <h3>遺失物招領名單</h3>
+              <span>找到疑似物品後，請依來源資訊前往認領。</span>
+            </div>
             <div class="filters">
-              <select id="lostCategoryFilter">
+              <select id="sourceFilter">
+                <option value="all">全部來源</option>
+                <option value="FB交流版">FB交流版</option>
+                <option value="圖書館遺失版">圖書館遺失版</option>
+                <option value="駐警隊">駐警隊</option>
+              </select>
+              <select id="categoryFilter">
                 <option value="all">全部類型</option>
                 <option value="電子產品">電子產品</option>
                 <option value="證件">證件</option>
                 <option value="日用品">日用品</option>
                 <option value="配件">配件</option>
+                <option value="衣物">衣物</option>
               </select>
             </div>
           </div>
-          <div id="lostList" class="card-grid"></div>
-        </div>
+          <div id="externalList" class="card-grid"></div>
+        </section>
       </section>
 
-      <section class="view" id="found">
-        <div class="panel">
-          <div class="panel-head wrap">
-            <h3>拾獲物列表</h3>
-            <div class="filters">
-              <select id="foundCategoryFilter">
-                <option value="all">全部類型</option>
-                <option value="電子產品">電子產品</option>
-                <option value="證件">證件</option>
-                <option value="日用品">日用品</option>
-                <option value="配件">配件</option>
-              </select>
-            </div>
-          </div>
-          <div id="foundList" class="card-grid"></div>
-        </div>
-      </section>
-
-      <section class="view" id="publish">
-        <div class="content-grid form-layout">
+      <section id="report" class="view">
+        <div class="content-grid report-grid">
           <section class="panel">
             <div class="panel-head">
-              <h3>發布新通報</h3>
-              <span>模擬使用者送出遺失 / 拾獲物資訊</span>
+              <div>
+                <h3>提報我遺失的物品</h3>
+                <span>填寫越完整，越容易比對到相近招領物。</span>
+              </div>
             </div>
-            <form id="publishForm" class="form-grid">
-              <label>
-                <span>通報類型</span>
-                <select name="type" required>
-                  <option value="lost">我遺失了</option>
-                  <option value="found">我撿到了</option>
-                </select>
-              </label>
+            <form id="reportForm" class="form-grid">
               <label>
                 <span>物品名稱</span>
                 <input name="title" type="text" placeholder="例如：黑色 AirPods Pro" required />
@@ -135,75 +225,59 @@
                   <option value="證件">證件</option>
                   <option value="日用品">日用品</option>
                   <option value="配件">配件</option>
+                  <option value="衣物">衣物</option>
                 </select>
               </label>
               <label>
-                <span>地點</span>
-                <input name="location" type="text" placeholder="例如：總圖 2F、自習室外" required />
+                <span>遺失地點</span>
+                <input name="location" type="text" placeholder="例如：總圖 2F 自習區" required />
               </label>
               <label>
-                <span>日期時間</span>
-                <input name="datetime" type="datetime-local" required />
-              </label>
-              <label>
-                <span>聯絡方式</span>
-                <input name="contact" type="text" placeholder="Email / IG / 電話" required />
+                <span>遺失時間</span>
+                <input name="lost_at" type="datetime-local" required />
               </label>
               <label class="full-width">
-                <span>描述</span>
-                <textarea name="description" rows="5" placeholder="例如：黑色保護殼、有貼白色貼紙、可能掉在圖書館..." required></textarea>
-              </label>
-              <label class="full-width">
-                <span>圖片</span>
-                <select name="emoji">
-                  <option value="🎧">🎧 耳機</option>
-                  <option value="🪪">🪪 證件</option>
-                  <option value="🍼">🍼 水壺</option>
-                  <option value="☂️">☂️ 雨傘</option>
-                  <option value="🎒">🎒 背包</option>
-                  <option value="📱">📱 手機</option>
-                </select>
+                <span>特徵描述</span>
+                <textarea name="description" rows="5" placeholder="例如：黑色保護殼、有白色貼紙、可能放在插座旁。" required></textarea>
               </label>
               <div class="form-actions full-width">
                 <button type="submit" class="primary-btn">送出通報</button>
-                <button type="button" class="ghost-btn" id="fillDemoBtn">填入範例</button>
+                <button type="button" id="fillSuggestedBtn" class="ghost-btn">填入建議內容</button>
               </div>
             </form>
           </section>
 
           <section class="panel">
             <div class="panel-head">
-              <h3>即時預覽</h3>
-              <span>送出後會同步進入列表並自動媒合</span>
+              <h3>我的最近提報</h3>
+              <span>你送出的遺失通報會在這裡累積。</span>
             </div>
-            <div id="previewCard" class="preview-card empty">
-              <p>尚未建立預覽內容</p>
-            </div>
+            <div id="reportList" class="list-stack"></div>
           </section>
         </div>
       </section>
 
-      <section class="view" id="matching">
-        <div class="panel">
+      <section id="matches" class="view">
+        <section class="panel">
           <div class="panel-head">
-            <h3>智慧媒合結果</h3>
-            <span>依據類型、地點、時間、關鍵字相似度計算</span>
+            <h3>媒合結果</h3>
+            <span>這裡會列出和你的通報相近的招領物。</span>
           </div>
-          <div id="matchingList" class="list-stack"></div>
-        </div>
+          <div id="matchList" class="list-stack"></div>
+        </section>
       </section>
 
-      <section class="view" id="notifications">
-        <div class="panel">
+      <section id="notifications" class="view">
+        <section class="panel">
           <div class="panel-head">
- </div>           <h3>通知中心</h3>
-            <button class="ghost-btn" id="markAllReadBtn">全部標記已讀</button>
+            <h3>通知紀錄</h3>
+            <button id="markReadBtn" class="ghost-btn">全部標記已讀</button>
           </div>
           <div id="notificationList" class="list-stack"></div>
-        </div>
+        </section>
       </section>
     </main>
-  </div>
+  </section>
 
   <script src="script.js"></script>
 </body>
