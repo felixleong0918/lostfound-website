@@ -1,0 +1,39 @@
+{% extends "layout.html" %}
+{% block content %}
+<section class="auth-shell">
+  <div class="auth-panel intro-panel">
+    <p class="eyebrow">NTU LOST & FOUND</p>
+    <h1>台大失物招領</h1>
+    <p class="intro-copy">找不到東西時，先查招領清單；還沒出現的話，留下遺失資訊，我們會在有相近物品時通知你。</p>
+    <div class="bullet-stack">
+      <div class="mini-card"><strong>先找找看</strong><span>查看目前校內常見管道整理出的招領資訊。</span></div>
+      <div class="mini-card"><strong>留下聯絡方式</strong><span>登入後可通報遺失物，後續通知會寄到你的台大信箱。</span></div>
+    </div>
+  </div>
+
+  <div class="auth-panel form-panel">
+    {% if step == 'email' %}
+    <form action="{{ url_for('login') }}" method="POST" class="auth-form active">
+      <h2>登入</h2>
+      <p class="form-note">使用台大信箱登入。我們將發送驗證碼到您的信箱。</p>
+      <label>
+        <span>NTU Email</span>
+        <input name="email" type="email" required placeholder="example@ntu.edu.tw" />
+      </label>
+      <button type="submit" class="primary-btn">發送驗證碼</button>
+    </form>
+    {% elif step == 'otp' %}
+    <form action="{{ url_for('verify') }}" method="POST" class="auth-form active">
+      <h2>輸入驗證碼</h2>
+      <p class="form-note">已發送至 {{ email }}</p>
+      <label>
+        <span>驗證碼 (OTP)</span>
+        <input name="otp" type="text" placeholder="6 位數驗證碼" required autofocus />
+      </label>
+      <button type="submit" class="primary-btn">驗證並登入</button>
+      <a href="{{ url_for('login') }}" class="ghost-btn" style="display:block; text-align:center; margin-top:16px;">重新輸入 Email</a>
+    </form>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
