@@ -50,11 +50,11 @@ def from_json(s):
 SEED_EXTERNAL_ITEMS = [
     {
         "title": "AirPods Pro 耳機", "category": "電子產品", "location": "總圖 1F 服務台附近", "found_at": "2026-05-25T14:25",
-        "description": "黑色充電盒，外殼上有白色貼紙，已送往服務台。", "source_name": "圖書館遺失版", "source_type": "library", "source_url": "",
+        "description": "黑色充電盒，外殼上有白色貼紙，已送往服務台。", "source_name": "總圖書館", "source_type": "library", "source_url": "",
     },
     {
         "title": "學生證", "category": "證件", "location": "管理學院 1F", "found_at": "2026-05-25T09:10",
-        "description": "在管院一樓撿到學生證一張，可持證明至櫃台認領。", "source_name": "圖書館遺失版", "source_type": "library", "source_url": "",
+        "description": "在管院一樓撿到學生證一張，可持證明至櫃台認領。", "source_name": "總圖書館", "source_type": "library", "source_url": "",
     },
     {
         "title": "黑色皮夾", "category": "配件", "location": "小福 2F", "found_at": "2026-05-24T18:40",
@@ -158,12 +158,18 @@ def get_user(user_id: int):
     with closing(get_db()) as db:
         return db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
 
-def fetch_bundle(user_id: int) -> dict:
+def fetch_bundle(user_id: int | None) -> dict:
     with closing(get_db()) as db:
-        external_items = [dict(row) for row in db.execute("SELECT * FROM external_items ORDER BY found_at DESC")]
-        reports = [dict(row) for row in db.execute("SELECT * FROM lost_reports WHERE user_id = ? ORDER BY lost_at DESC", (user_id,))]
-        matches = [dict(row) for row in db.execute("SELECT matches.id, matches.score, matches.reasons_json, matches.created_at, lost_reports.title AS report_title, external_items.title AS external_title, external_items.location AS external_location, external_items.source_name AS external_source_name, external_items.source_type AS external_source_type, external_items.source_url AS external_source_url FROM matches JOIN lost_reports ON lost_reports.id = matches.report_id JOIN external_items ON external_items.id = matches.external_item_id WHERE lost_reports.user_id = ? ORDER BY matches.score DESC, matches.created_at DESC", (user_id,))]
-        notifications = [dict(row) for row in db.execute("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC", (user_id,))]
+        if user_id:
+            external_items = [dict(row) for row in db.execute("SELECT * FROM external_items ORDER BY found_at DESC")]
+            reports = [dict(row) for row in db.execute("SELECT * FROM lost_reports WHERE user_id = ? ORDER BY lost_at DESC", (user_id,))]
+            matches = [dict(row) for row in db.execute("SELECT matches.id, matches.score, matches.reasons_json, matches.created_at, lost_reports.title AS report_title, external_items.title AS external_title, external_items.location AS external_location, external_items.source_name AS external_source_name, external_items.source_type AS external_source_type, external_items.source_url AS external_source_url FROM matches JOIN lost_reports ON lost_reports.id = matches.report_id JOIN external_items ON external_items.id = matches.external_item_id WHERE lost_reports.user_id = ? ORDER BY matches.score DESC, matches.created_at DESC", (user_id,))]
+            notifications = [dict(row) for row in db.execute("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC", (user_id,))]
+        else:
+            external_items = [dict(row) for row in db.execute("SELECT * FROM external_items WHERE source_type != 'facebook' ORDER BY found_at DESC")]
+            reports = []
+            matches = []
+            notifications = []
     return {"external_items": external_items, "reports": reports, "matches": matches, "notifications": notifications}
 
 def run_matching(report_id: int) -> None:
@@ -264,9 +270,8 @@ def logout():
 
 @app.route("/")
 def dashboard():
-    user_id = require_login()
-    if not user_id: return redirect(url_for("login"))
-    user = get_user(user_id)
+    user_id = session.get("user_id")
+    user = get_user(user_id) if user_id else None
     bundle = fetch_bundle(user_id)
     summary = {}
     for item in bundle["external_items"]:
@@ -275,9 +280,8 @@ def dashboard():
 
 @app.route("/sources")
 def sources():
-    user_id = require_login()
-    if not user_id: return redirect(url_for("login"))
-    user = get_user(user_id)
+    user_id = session.get("user_id")
+    user = get_user(user_id) if user_id else None
     bundle = fetch_bundle(user_id)
     q = request.args.get("q", "").strip().lower()
     source = request.args.get("source", "all")
