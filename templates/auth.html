@@ -20,7 +20,10 @@
         <span>NTU Email</span>
         <input name="email" type="email" required placeholder="example@ntu.edu.tw" />
       </label>
-      <button type="submit" class="primary-btn">發送驗證碼</button>
+      <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
+        <button type="submit" class="primary-btn">發送驗證碼</button>
+        <a href="{{ url_for('dashboard') }}" class="ghost-btn" style="text-align: center;">返回首頁</a>
+      </div>
     </form>
     {% elif step == 'otp' %}
     <form action="{{ url_for('verify') }}" method="POST" class="auth-form active">
@@ -30,8 +33,10 @@
         <span>驗證碼 (OTP)</span>
         <input name="otp" type="text" placeholder="6 位數驗證碼" required autofocus />
       </label>
-      <button type="submit" class="primary-btn">驗證並登入</button>
-      <a href="{{ url_for('login') }}" class="ghost-btn" style="display:block; text-align:center; margin-top:16px;">重新輸入 Email</a>
+      <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
+        <button type="submit" class="primary-btn">驗證並登入</button>
+        <a href="{{ url_for('login') }}" class="ghost-btn" style="text-align: center;">重新輸入 Email</a>
+      </div>
     </form>
     {% endif %}
   </div>

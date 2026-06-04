@@ -5,15 +5,21 @@
     <div class="brand-block">
       <p class="eyebrow">NTU LOST & FOUND</p>
       <h2>台大失物招領</h2>
-      <p class="muted-text">{{ user.name }}，{{ user.email }}</p>
+      {% if user %}
+        <p class="muted-text">{{ user.name }}，{{ user.email }}</p>
+      {% else %}
+        <p class="muted-text">訪客模式 (未登入)</p>
+      {% endif %}
     </div>
 
     <nav class="nav">
       <a href="{{ url_for('dashboard') }}" class="nav-item {% if view == 'dashboard' %}active{% endif %}">總覽</a>
       <a href="{{ url_for('sources') }}" class="nav-item {% if view == 'sources' %}active{% endif %}">招領名單</a>
-      <a href="{{ url_for('report') }}" class="nav-item {% if view == 'report' %}active{% endif %}">通報遺失物</a>
-      <a href="{{ url_for('matches') }}" class="nav-item {% if view == 'matches' %}active{% endif %}">媒合結果</a>
-      <a href="{{ url_for('notifications') }}" class="nav-item {% if view == 'notifications' %}active{% endif %}">通知紀錄</a>
+      {% if user %}
+        <a href="{{ url_for('report') }}" class="nav-item {% if view == 'report' %}active{% endif %}">通報遺失物</a>
+        <a href="{{ url_for('matches') }}" class="nav-item {% if view == 'matches' %}active{% endif %}">媒合結果</a>
+        <a href="{{ url_for('notifications') }}" class="nav-item {% if view == 'notifications' %}active{% endif %}">通知紀錄</a>
+      {% endif %}
     </nav>
 
     <div class="sidebar-card">
@@ -22,9 +28,13 @@
       <p>通報時請寫清楚時間、地點、外觀特徵，避免只填「錢包」或「耳機」。</p>
     </div>
 
-    <form action="{{ url_for('logout') }}" method="POST" style="width:100%;">
-      <button type="submit" class="ghost-btn full-btn">登出</button>
-    </form>
+    {% if user %}
+      <form action="{{ url_for('logout') }}" method="POST" style="width:100%;">
+        <button type="submit" class="ghost-btn full-btn">登出</button>
+      </form>
+    {% else %}
+      <a href="{{ url_for('login') }}" class="primary-btn full-btn" style="text-align: center; display: block;">立即登入</a>
+    {% endif %}
   </aside>
 
   <main class="main">
@@ -49,8 +59,26 @@
         </p>
       </div>
       <div class="topbar-actions">
-        <form action="{{ url_for('sources') }}" method="GET" style="display:flex;">
+        <form action="{{ url_for('sources') }}" method="GET" style="display:flex; gap: 12px; align-items: center;">
           <input name="q" type="text" placeholder="搜尋物品、地點、來源..." value="{{ q or '' }}" />
+          {% if view == 'sources' %}
+            <select name="source" onchange="this.form.submit()" style="width: auto; padding: 13px 14px;">
+              <option value="all" {% if cur_source == 'all' %}selected{% endif %}>全部來源</option>
+              {% if user %}
+                <option value="FB交流版" {% if cur_source == 'FB交流版' %}selected{% endif %}>FB交流版</option>
+              {% endif %}
+              <option value="總圖書館" {% if cur_source == '總圖書館' %}selected{% endif %}>總圖書館</option>
+              <option value="駐警隊" {% if cur_source == '駐警隊' %}selected{% endif %}>駐警隊</option>
+            </select>
+            <select name="category" onchange="this.form.submit()" style="width: auto; padding: 13px 14px;">
+              <option value="all" {% if cur_cat == 'all' %}selected{% endif %}>全部類型</option>
+              <option value="電子產品" {% if cur_cat == '電子產品' %}selected{% endif %}>電子產品</option>
+              <option value="證件" {% if cur_cat == '證件' %}selected{% endif %}>證件</option>
+              <option value="日用品" {% if cur_cat == '日用品' %}selected{% endif %}>日用品</option>
+              <option value="配件" {% if cur_cat == '配件' %}selected{% endif %}>配件</option>
+              <option value="衣物" {% if cur_cat == '衣物' %}selected{% endif %}>衣物</option>
+            </select>
+          {% endif %}
         </form>
         <a href="{{ url_for('report') }}" class="primary-btn" style="display:flex; align-items:center;">通報遺失物</a>
       </div>
@@ -59,10 +87,10 @@
     {% if view == 'dashboard' %}
     <section class="view active">
       <div class="stats-grid">
-        <article class="stat-card"><span>招領物品</span><strong>{{ external_items|length }}</strong></article>
-        <article class="stat-card"><span>我的通報</span><strong>{{ reports|length }}</strong></article>
-        <article class="stat-card"><span>可能符合</span><strong>{{ matches|length }}</strong></article>
-        <article class="stat-card"><span>未讀通知</span><strong>{{ notifications|selectattr('is_read', 'equalto', 0)|list|length }}</strong></article>
+        <article class="stat-card"><span>招領物品 </span><strong>{{ external_items|length }}</strong></article>
+        <article class="stat-card"><span>我的通報 </span><strong>{% if user %}{{ reports|length }}{% else %}-{% endif %}</strong></article>
+        <article class="stat-card"><span>可能符合 </span><strong>{% if user %}{{ matches|length }}{% else %}-{% endif %}</strong></article>
+        <article class="stat-card"><span>未讀通知 </span><strong>{% if user %}{{ notifications|selectattr('is_read', 'equalto', 0)|list|length }}{% else %}-{% endif %}</strong></article>
       </div>
       <div class="hero-grid">
         <section class="panel accent-panel">
@@ -70,7 +98,11 @@
           <h3>遺失物品了嗎？</h3>
           <p>先用上方搜尋列找物品名稱、地點或特徵。如果沒有看到符合的項目，就建立一筆遺失通報。</p>
           <div class="quick-actions">
-            <a href="{{ url_for('report') }}" class="primary-btn" style="display:flex; align-items:center;">建立遺失通報</a>
+            {% if user %}
+              <a href="{{ url_for('report') }}" class="primary-btn" style="display:flex; align-items:center;">建立遺失通報</a>
+            {% else %}
+              <a href="{{ url_for('login') }}" class="primary-btn" style="display:flex; align-items:center;">登入以建立通報</a>
+            {% endif %}
             <a href="{{ url_for('sources') }}" class="ghost-btn" style="display:flex; align-items:center;">查看招領清單</a>
           </div>
         </section>
@@ -80,6 +112,9 @@
             {% for name, count in summary.items() %}
             <div class="summary-card"><span>{{ name }}</span><strong>{{ count }}</strong></div>
             {% endfor %}
+            {% if not user %}
+            <div class="summary-card" style="opacity: 0.6; cursor: help;" title="登入後可查看更多來源"><span>FB交流版</span><strong>登入可見</strong></div>
+            {% endif %}
           </div>
         </section>
       </div>
@@ -88,12 +123,17 @@
           <div class="panel-head"><h3>最新招領名單</h3><a href="{{ url_for('sources') }}" class="ghost-btn" style="display:flex; align-items:center;">查看全部</a></div>
           <div class="list-stack">
             {% for item in external_items[:4] %}
-            <article class="item-card">
-              <div class="card-badge">{{ item.category }}</div>
-              <h4>{{ item.title }}</h4>
-              <div class="item-meta">{{ item.location }} ・ {{ item.found_at|format_time }}</div>
-              <p>{{ item.description }}</p>
-              <div class="source-line"><span>來源</span><strong>{{ item.source_name }}</strong></div>
+            <article class="item-card" style="display: flex; flex-direction: column; height: 100%;">
+              <div style="flex-grow: 1;">
+                <div class="card-badge">{{ item.category }}</div>
+                <h4>{{ item.title }}</h4>
+                <div class="item-meta">{{ item.location }} ・ {{ item.found_at|format_time }}</div>
+                <p>{{ item.description }}</p>
+              </div>
+              <div class="source-line" style="margin-top: auto; display: flex; align-items: center; gap: 8px;">
+                <span>來源：</span>
+                <strong>{{ item.source_name }}</strong>
+              </div>
             </article>
             {% else %}
             <div class="empty-state">目前沒有資料。</div>
@@ -101,19 +141,23 @@
           </div>
         </section>
         <section class="panel">
-          <div class="panel-head"><h3>最近媒合結果</h3><a href="{{ url_for('matches') }}" class="ghost-btn" style="display:flex; align-items:center;">查看全部</a></div>
+          <div class="panel-head"><h3>最近媒合結果</h3>{% if user %}<a href="{{ url_for('matches') }}" class="ghost-btn" style="display:flex; align-items:center;">查看全部</a>{% endif %}</div>
           <div class="list-stack">
-            {% for match in matches[:3] %}
-            <div class="match-item">
-              <div class="feed-head">
-                <div><strong>{{ match.report_title }}</strong><div class="item-meta">對應招領物：{{ match.external_title }}</div></div>
-                <span class="score">{{ match.score }}%</span>
+            {% if user %}
+              {% for match in matches[:3] %}
+              <div class="match-item">
+                <div class="feed-head">
+                  <div><strong>{{ match.report_title }}</strong><div class="item-meta">對應招領物：{{ match.external_title }}</div></div>
+                  <span class="score">{{ match.score }}%</span>
+                </div>
+                <div class="item-meta">{{ match.external_location }} ・ {{ match.external_source_name }}</div>
               </div>
-              <div class="item-meta">{{ match.external_location }} ・ {{ match.external_source_name }}</div>
-            </div>
+              {% else %}
+              <div class="empty-state">目前沒有最新媒合。</div>
+              {% endfor %}
             {% else %}
-            <div class="empty-state">目前沒有最新媒合。</div>
-            {% endfor %}
+              <div class="empty-state">登入後即可自動媒合遺失物。</div>
+            {% endif %}
           </div>
         </section>
       </div>
@@ -122,37 +166,24 @@
     {% elif view == 'sources' %}
     <section class="view active">
       <section class="panel">
-        <div class="panel-head wrap">
-          <div><h3>遺失物招領名單</h3><span>找到疑似物品後，請依來源資訊前往認領。</span></div>
-          <form method="GET" action="{{ url_for('sources') }}" class="filters">
-            <input type="hidden" name="q" value="{{ q or '' }}" />
-            <select name="source" onchange="this.form.submit()">
-              <option value="all" {% if cur_source == 'all' %}selected{% endif %}>全部來源</option>
-              <option value="FB交流版" {% if cur_source == 'FB交流版' %}selected{% endif %}>FB交流版</option>
-              <option value="圖書館遺失版" {% if cur_source == '圖書館遺失版' %}selected{% endif %}>圖書館遺失版</option>
-              <option value="駐警隊" {% if cur_source == '駐警隊' %}selected{% endif %}>駐警隊</option>
-            </select>
-            <select name="category" onchange="this.form.submit()">
-              <option value="all" {% if cur_cat == 'all' %}selected{% endif %}>全部類型</option>
-              <option value="電子產品" {% if cur_cat == '電子產品' %}selected{% endif %}>電子產品</option>
-              <option value="證件" {% if cur_cat == '證件' %}selected{% endif %}>證件</option>
-              <option value="日用品" {% if cur_cat == '日用品' %}selected{% endif %}>日用品</option>
-              <option value="配件" {% if cur_cat == '配件' %}selected{% endif %}>配件</option>
-              <option value="衣物" {% if cur_cat == '衣物' %}selected{% endif %}>衣物</option>
-            </select>
-          </form>
-        </div>
         <div class="card-grid">
           {% for item in external_items %}
-          <article class="item-card">
-            <div class="card-badge">{{ item.category }}</div>
-            <h4>{{ item.title }}</h4>
-            <div class="item-meta">{{ item.location }} ・ {{ item.found_at|format_time }}</div>
-            <p>{{ item.description }}</p>
-            <div class="source-line"><span>來源</span><strong>{{ item.source_name }}</strong></div>
-            <div class="item-meta">
-              {% if item.source_type == 'facebook' %}<a href="{{ item.source_url }}" target="_blank">FB交流版連結</a>
-              {% else %}{{ item.source_name }}{% endif %}
+          <article class="item-card" style="display: flex; flex-direction: column; height: 100%;">
+            <div style="flex-grow: 1;">
+              <div class="card-badge">{{ item.category }}</div>
+              <h4>{{ item.title }}</h4>
+              <div class="item-meta">{{ item.location }} ・ {{ item.found_at|format_time }}</div>
+              <p>{{ item.description }}</p>
+            </div>
+            <div class="source-line" style="margin-top: auto; display: flex; align-items: center; gap: 8px;">
+              <span>來源：</span>
+              <strong>
+                {% if item.source_type == 'facebook' %}
+                  <a href="{{ item.source_url }}" target="_blank">{{ item.source_name }}</a>
+                {% else %}
+                  {{ item.source_name }}
+                {% endif %}
+              </strong>
             </div>
           </article>
           {% else %}
