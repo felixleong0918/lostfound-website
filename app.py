@@ -248,12 +248,21 @@ def verify():
             if res and res.user:
                 sb_user = res.user
                 with closing(get_db()) as db:
-                    user = db.execute("SELECT id FROM users WHERE supabase_id = ? OR email = ?", (sb_user.id, email)).fetchone()
+                    user = db.execute(
+                        "SELECT id, supabase_id FROM users WHERE supabase_id = ? OR email = ?",
+                        (sb_user.id, email),
+                    ).fetchone()
                     if not user:
                         name = email.split("@")[0]
-                        db.execute("INSERT INTO users (supabase_id, name, email, created_at) VALUES (?, ?, ?, ?)", (sb_user.id, name, email, now_iso()))
+                        db.execute(
+                            "INSERT INTO users (supabase_id, name, email, created_at) VALUES (?, ?, ?, ?)",
+                            (sb_user.id, name, email, now_iso()),
+                        )
                         db.commit()
-                        user = db.execute("SELECT id FROM users WHERE supabase_id = ?", (sb_user.id,)).fetchone()
+                        user = db.execute(
+                            "SELECT id, supabase_id FROM users WHERE supabase_id = ?",
+                            (sb_user.id,),
+                        ).fetchone()
                     elif not user["supabase_id"]:
                         db.execute("UPDATE users SET supabase_id = ? WHERE id = ?", (sb_user.id, user["id"]))
                         db.commit()
