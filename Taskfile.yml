@@ -15,6 +15,11 @@ tasks:
     desc: Initialize lost item table from pre-crawled csv file
     cmds:
       - poetry run python scripts/seed_from_csv.py
+      
+  crawl-lib:
+    desc: Run the Python BeautifulSoup scraper locally and push to Supabase
+    cmds:
+      - poetry run python scripts/scrapers/supa_crawl_lib.py
   
   cleanup:
     desc: Stop local server on the configured frontend port
