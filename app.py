@@ -214,8 +214,9 @@ def login():
             session["auth_time"] = datetime.now().timestamp()
             flash("驗證碼已寄出，請檢查您的台大信箱。", "info")
             return redirect(url_for("verify"))
-        except Exception as e:
-            flash(f"發送驗證碼失敗: {e}", "error")
+        except Exception:
+            app.logger.exception("Failed to send Supabase OTP")
+            flash("發送驗證碼失敗，請稍後再試。", "error")
             return redirect(url_for("login"))
     
     # Clear stale auth state when visiting login page
