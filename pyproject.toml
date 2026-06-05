@@ -1,0 +1,31 @@
+[project]
+name = "lost-found-tracker"
+version = "0.1.0"
+description = "Scraper and dashboard for lost and found tracking"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "Flask>=3.0.0,<4.0.0",
+    "Flask-SQLAlchemy>=3.1.1,<4.0.0",
+    "psycopg[binary]>=3.2.0,<4.0.0",
+    "python-dotenv>=1.0.1,<2.0.0",
+    "supabase>=2.24.0,<3.0.0",
+]
+
+[tool.poetry]
+packages = [{ include = "core" }]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.0"
+
+[tool.pytest.ini_options]
+addopts = "-m 'not ui'"
+markers = [
+    "unit: focused unit tests for isolated functions and model behavior",
+    "integration: Flask integration tests that exercise routes or cross-module behavior",
+    "ui: browser-based Selenium UI tests",
+]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
