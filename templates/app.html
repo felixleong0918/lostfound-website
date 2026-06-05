@@ -250,7 +250,7 @@
               {% endfor %}
             </ul>
             <div class="match-link">
-              {% if match.external_source_type == 'facebook' %}<a href="{{ match.external_source_url }}" target="_blank">查看原始貼文</a>
+              {% if match.external_source_type == 'facebook' %}<a href="{{ match.external_source_url }}" target="_blank" rel="noopener noreferrer">查看原始貼文</a>
               {% else %}來源：{{ match.external_source_name }}{% endif %}
             </div>
           </div>
