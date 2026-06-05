@@ -179,7 +179,7 @@
               <span>來源：</span>
               <strong>
                 {% if item.source_type == 'facebook' %}
-                  <a href="{{ item.source_url }}" target="_blank">{{ item.source_name }}</a>
+                  <a href="{{ item.source_url }}" target="_blank" rel="noopener noreferrer">{{ item.source_name }}</a>
                 {% else %}
                   {{ item.source_name }}
                 {% endif %}
