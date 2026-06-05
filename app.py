@@ -240,6 +240,9 @@ def verify():
         if not otp:
             flash("請輸入驗證碼。", "error")
             return redirect(url_for("verify"))
+        if not supabase:
+            flash("系統未設定 Supabase 憑證。", "error")
+            return redirect(url_for("login"))
         try:
             res = supabase.auth.verify_otp({"email": email, "token": otp, "type": "email"})
             if res and res.user:
