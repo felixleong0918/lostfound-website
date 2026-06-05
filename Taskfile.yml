@@ -1,6 +1,21 @@
 version: '3'
 
 tasks:
+  install:
+    desc: Install project dependencies with Poetry
+    cmds:
+      - poetry install --with dev --no-interaction
+  
+  setup-supabase:
+    desc: Initialize Supabase tables
+    cmds:
+      - poetry run python scripts/setup_db.py
+      
+  init-lostitem:
+    desc: Initialize lost item table from pre-crawled csv file
+    cmds:
+      - poetry run python scripts/seed_from_csv.py
+  
   cleanup:
     desc: Stop local server on the configured frontend port
     cmds:
