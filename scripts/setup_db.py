@@ -31,8 +31,11 @@ def main():
                 if isinstance(bucket, dict)
             }
             if bucket_name not in existing_buckets:
-                supabase.storage.create_bucket(bucket_name)
-                print(f"Initialization successful! storage bucket '{bucket_name}' created.")
+                try:
+                    supabase.storage.create_bucket(bucket_name)
+                    print(f"Initialization successful! storage bucket '{bucket_name}' created.")
+                except Exception as exc:
+                    raise RuntimeError(f"Failed to initialize storage bucket '{bucket_name}': {exc}") from exc
             else:
                 print(f"Initialization successful! storage bucket '{bucket_name}' already exists.")
         else:
