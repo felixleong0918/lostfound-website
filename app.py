@@ -3,21 +3,26 @@ from __future__ import annotations
 import json
 import os
 import smtplib
-import sqlite3
-import re
 from contextlib import closing
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
 
-from flask import Flask, request, send_from_directory, session, render_template, redirect, url_for, flash
+import psycopg
+from psycopg.rows import dict_row
+from flask import Flask, request, session, render_template, redirect, url_for, flash
 from dotenv import load_dotenv
+
+import matching
+import bridge
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "lostfound.db"
-MAIL_LOG = BASE_DIR / "mail.log"
+# Vercel 等 serverless 環境檔案系統唯讀，可用 MAIL_LOG_PATH 指到 /tmp（沒設定 SMTP 時才會用到）。
+MAIL_LOG = Path(os.environ.get("MAIL_LOG_PATH", str(BASE_DIR / "mail.log")))
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
@@ -29,13 +34,17 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "change-me-for-production")
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
 
+EMBED_BATCH = 32  # 一次送進 Jina 的招領物筆數
+
+
 # --- Template Filters ---
 @app.template_filter('format_time')
 def format_time(s):
     if not s: return ""
+    if isinstance(s, datetime):
+        return s.strftime("%Y/%m/%d %H:%M")
     try:
-        dt = datetime.fromisoformat(s)
-        return dt.strftime("%Y/%m/%d %H:%M")
+        return datetime.fromisoformat(str(s)).strftime("%Y/%m/%d %H:%M")
     except ValueError:
         return s
 
@@ -46,34 +55,22 @@ def from_json(s):
     except Exception:
         return []
 
-# --- Database Seeding ---
-SEED_EXTERNAL_ITEMS = [
-    {
-        "title": "AirPods Pro 耳機", "category": "電子產品", "location": "總圖 1F 服務台附近", "found_at": "2026-05-25T14:25",
-        "description": "黑色充電盒，外殼上有白色貼紙，已送往服務台。", "source_name": "總圖書館", "source_type": "library", "source_url": "",
-    },
-    {
-        "title": "學生證", "category": "證件", "location": "管理學院 1F", "found_at": "2026-05-25T09:10",
-        "description": "在管院一樓撿到學生證一張，可持證明至櫃台認領。", "source_name": "總圖書館", "source_type": "library", "source_url": "",
-    },
-    {
-        "title": "黑色皮夾", "category": "配件", "location": "小福 2F", "found_at": "2026-05-24T18:40",
-        "description": "短夾內有悠遊卡，外觀有磨損。", "source_name": "FB交流版", "source_type": "facebook", "source_url": "https://facebook.com/groups/ntu.lostfound/posts/black-wallet",
-    },
-    {
-        "title": "灰色雨傘", "category": "日用品", "location": "普通教學館", "found_at": "2026-05-23T17:20",
-        "description": "灰色長傘，木頭握把，已交至駐警隊。", "source_name": "駐警隊", "source_type": "police", "source_url": "",
-    },
-    {
-        "title": "深藍色外套", "category": "衣物", "location": "活大前草地", "found_at": "2026-05-22T20:15",
-        "description": "外套袖口有白色條紋，天氣轉涼前可至貼文聯絡。", "source_name": "FB交流版", "source_type": "facebook", "source_url": "https://facebook.com/groups/ntu.lostfound/posts/jacket",
-    },
-]
+@app.context_processor
+def inject_globals():
+    # 通報表單與篩選共用同一組正規類別，確保選項一致。
+    return {"categories": matching.CANONICAL_CATEGORIES}
 
-def get_db() -> sqlite3.Connection:
-    connection = sqlite3.connect(DB_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
+
+# --- Database ---
+def get_db() -> psycopg.Connection:
+    """開一條 Supabase Postgres 連線（dict row）。
+
+    prepare_threshold=None 是為了配合 Supabase 的 transaction pooler（pgbouncer），
+    避免 prepared statement 在連線間衝突。
+    """
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL 未設定")
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
 
 def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
@@ -81,38 +78,71 @@ def now_iso() -> str:
 def is_ntu_email(email: str) -> bool:
     return email.strip().lower().endswith("@ntu.edu.tw")
 
-def normalize_words(text: str) -> set[str]:
-    clean = text.lower()
-    for token in ["：", "，", ",", ".", "(", ")", "[", "]", "{", "}", "<", ">"]:
-        clean = clean.replace(token, " ")
-    return {piece for piece in clean.split() if piece}
+# 應用自有資料表（找到的招領物 lost_items 由爬蟲 / SQLAlchemy 那側維護）。
+_SCHEMA_STATEMENTS = [
+    """CREATE TABLE IF NOT EXISTS users (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        supabase_id text UNIQUE,
+        name text NOT NULL,
+        email text NOT NULL UNIQUE,
+        created_at text NOT NULL
+    )""",
+    # lost_date_start / lost_date_end 為日期區間（YYYY-MM-DD）；使用者通常記不清確切時間，
+    # 且圖書館資料只有日期，故以「天」為精度的區間取代原本精確到分鐘的單一時刻。
+    # status：open（進行中）/ resolved（已找到）。
+    """CREATE TABLE IF NOT EXISTS lost_reports (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        user_id bigint NOT NULL REFERENCES users(id),
+        title text NOT NULL,
+        category text,
+        location text,
+        lost_date_start text,
+        lost_date_end text,
+        status text NOT NULL DEFAULT 'open',
+        description text,
+        embedding text,
+        created_at text NOT NULL
+    )""",
+    # lost_item_id 對應 lost_items.id（integer），型別需相符。
+    """CREATE TABLE IF NOT EXISTS matches (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        report_id bigint NOT NULL REFERENCES lost_reports(id),
+        lost_item_id integer NOT NULL REFERENCES lost_items(id),
+        score int NOT NULL,
+        reasons_json text NOT NULL,
+        created_at text NOT NULL,
+        UNIQUE(report_id, lost_item_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS notifications (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        user_id bigint NOT NULL REFERENCES users(id),
+        subject text NOT NULL,
+        message text NOT NULL,
+        is_read int NOT NULL DEFAULT 0,
+        delivery text NOT NULL DEFAULT 'email',
+        created_at text NOT NULL
+    )""",
+    # 招領物的語意向量（JSON 陣列存 text；資料量小，於 Python 端算 cosine）。
+    "ALTER TABLE lost_items ADD COLUMN IF NOT EXISTS embedding text",
+    # --- 既有資料庫的欄位遷移（CREATE TABLE IF NOT EXISTS 不會改既有表）---
+    "ALTER TABLE lost_reports ADD COLUMN IF NOT EXISTS lost_date_start text",
+    "ALTER TABLE lost_reports ADD COLUMN IF NOT EXISTS lost_date_end text",
+    "ALTER TABLE lost_reports ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'open'",
+    # 舊的精確到分鐘的單一時刻欄位不再使用（無正式資料）。
+    "ALTER TABLE lost_reports DROP COLUMN IF EXISTS lost_at",
+]
 
-def similarity(report: sqlite3.Row, external: sqlite3.Row) -> tuple[int, list[str]]:
-    score = 0
-    reasons: list[str] = []
-    if report["category"] == external["category"]:
-        score += 35
-        reasons.append("類型一致")
-    report_location = report["location"].lower()
-    external_location = external["location"].lower()
-    if report_location[:2] and (report_location[:2] in external_location or external_location[:2] in report_location):
-        score += 20
-        reasons.append("地點相近")
-    report_time = datetime.fromisoformat(report["lost_at"])
-    external_time = datetime.fromisoformat(external["found_at"])
-    diff_hours = abs((external_time - report_time).total_seconds()) / 3600
-    if diff_hours <= 6:
-        score += 20
-        reasons.append("時間高度接近")
-    elif diff_hours <= 24:
-        score += 10
-        reasons.append("時間落在合理範圍")
-    shared = normalize_words(report["title"] + " " + report["description"]).intersection(normalize_words(external["title"] + " " + external["description"]))
-    if shared:
-        score += min(25, len(shared) * 6)
-        reasons.append("關鍵字重疊：" + "、".join(sorted(shared)[:4]))
-    return min(score, 99), reasons
+def init_db() -> None:
+    with closing(get_db()) as db:
+        for statement in _SCHEMA_STATEMENTS:
+            db.execute(statement)
+        db.commit()
 
+# 注意：schema 由 `task setup-supabase`（scripts/setup_db.py）一次建立，
+# 不在 import 時自動執行 DDL —— 這樣 Vercel 每次 cold start 才不會多打一次資料庫。
+
+
+# --- Email ---
 def send_email(recipient: str, subject: str, body: str) -> bool:
     smtp_host = os.environ.get("SMTP_HOST")
     smtp_port = int(os.environ.get("SMTP_PORT", "587"))
@@ -120,35 +150,29 @@ def send_email(recipient: str, subject: str, body: str) -> bool:
     smtp_password = os.environ.get("SMTP_PASSWORD")
     smtp_sender = os.environ.get("SMTP_SENDER", smtp_user or "noreply@ntu-lost-etl.local")
     if not smtp_host or not smtp_user or not smtp_password:
-        with MAIL_LOG.open("a", encoding="utf-8") as handle:
-            handle.write(f"[{now_iso()}] TO: {recipient}\nSUBJECT: {subject}\n{body}\n\n")
+        try:
+            with MAIL_LOG.open("a", encoding="utf-8") as handle:
+                handle.write(f"[{now_iso()}] TO: {recipient}\nSUBJECT: {subject}\n{body}\n\n")
+        except OSError:
+            app.logger.info("SMTP 未設定，且 mail.log 不可寫入；略過信件：%s", subject)
         return False
     message = EmailMessage()
     message["From"] = smtp_sender
     message["To"] = recipient
     message["Subject"] = subject
     message.set_content(body)
-    with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
-        smtp.starttls()
-        smtp.login(smtp_user, smtp_password)
-        smtp.send_message(message)
+    # 465 = implicit SSL (SMTPS)；587/其他 = STARTTLS。
+    if smtp_port == 465:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as smtp:
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+    else:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+            smtp.starttls()
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
     return True
 
-def init_db() -> None:
-    with closing(get_db()) as db:
-        db.executescript("""
-            CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, supabase_id TEXT UNIQUE, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS external_items (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT NOT NULL, location TEXT NOT NULL, found_at TEXT NOT NULL, description TEXT NOT NULL, source_name TEXT NOT NULL, source_type TEXT NOT NULL, source_url TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS lost_reports (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, title TEXT NOT NULL, category TEXT NOT NULL, location TEXT NOT NULL, lost_at TEXT NOT NULL, description TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id));
-            CREATE TABLE IF NOT EXISTS matches (id INTEGER PRIMARY KEY AUTOINCREMENT, report_id INTEGER NOT NULL, external_item_id INTEGER NOT NULL, score INTEGER NOT NULL, reasons_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(report_id, external_item_id), FOREIGN KEY(report_id) REFERENCES lost_reports(id), FOREIGN KEY(external_item_id) REFERENCES external_items(id));
-            CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, subject TEXT NOT NULL, message TEXT NOT NULL, is_read INTEGER NOT NULL DEFAULT 0, delivery TEXT NOT NULL DEFAULT 'email', created_at TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id));
-        """)
-        count = db.execute("SELECT COUNT(*) AS count FROM external_items").fetchone()["count"]
-        if count == 0:
-            db.executemany("INSERT INTO external_items (title, category, location, found_at, description, source_name, source_type, source_url) VALUES (:title, :category, :location, :found_at, :description, :source_name, :source_type, :source_url)", SEED_EXTERNAL_ITEMS)
-        db.commit()
-
-init_db()
 
 # --- Auth Helpers ---
 def require_login() -> int | None:
@@ -156,46 +180,186 @@ def require_login() -> int | None:
 
 def get_user(user_id: int):
     with closing(get_db()) as db:
-        return db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return db.execute("SELECT * FROM users WHERE id = %s", (user_id,)).fetchone()
+
+
+# --- Found items (lost_items) <-> 前端 / 媒合用的 external 形狀 ---
+def _external_from_lost_item(row: dict) -> dict:
+    """把一筆 lost_items 列映射成前端 / 媒合用的 dict，並帶上 id。"""
+    external = bridge.lost_item_to_external(row)
+    external["id"] = row["id"]
+    return external
 
 def fetch_bundle(user_id: int | None) -> dict:
     with closing(get_db()) as db:
-        if user_id:
-            external_items = [dict(row) for row in db.execute("SELECT * FROM external_items ORDER BY found_at DESC")]
-            reports = [dict(row) for row in db.execute("SELECT * FROM lost_reports WHERE user_id = ? ORDER BY lost_at DESC", (user_id,))]
-            matches = [dict(row) for row in db.execute("SELECT matches.id, matches.score, matches.reasons_json, matches.created_at, lost_reports.title AS report_title, external_items.title AS external_title, external_items.location AS external_location, external_items.source_name AS external_source_name, external_items.source_type AS external_source_type, external_items.source_url AS external_source_url FROM matches JOIN lost_reports ON lost_reports.id = matches.report_id JOIN external_items ON external_items.id = matches.external_item_id WHERE lost_reports.user_id = ? ORDER BY matches.score DESC, matches.created_at DESC", (user_id,))]
-            notifications = [dict(row) for row in db.execute("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC", (user_id,))]
-        else:
-            external_items = [dict(row) for row in db.execute("SELECT * FROM external_items WHERE source_type != 'facebook' ORDER BY found_at DESC")]
-            reports = []
-            matches = []
-            notifications = []
+        item_rows = db.execute("SELECT * FROM lost_items ORDER BY found_date DESC").fetchall()
+        external_items = [_external_from_lost_item(r) for r in item_rows]
+        if not user_id:
+            external_items = [e for e in external_items if e["source_type"] != "facebook"]
+            return {"external_items": external_items, "reports": [], "matches": [], "notifications": []}
+
+        reports = [dict(r) for r in db.execute("SELECT * FROM lost_reports WHERE user_id = %s ORDER BY created_at DESC", (user_id,))]
+        match_rows = db.execute(
+            """SELECT m.id, m.score, m.reasons_json, m.created_at, r.title AS report_title,
+                      li.source_system, li.original_id, li.found_date, li.location,
+                      li.description, li.category, li.storage_place
+               FROM matches m
+               JOIN lost_reports r ON r.id = m.report_id
+               JOIN lost_items li ON li.id = m.lost_item_id
+               WHERE r.user_id = %s
+               ORDER BY m.score DESC, m.created_at DESC""",
+            (user_id,),
+        ).fetchall()
+        matches = []
+        for mr in match_rows:
+            ext = bridge.lost_item_to_external(mr)
+            matches.append({
+                "id": mr["id"], "score": mr["score"], "reasons_json": mr["reasons_json"], "created_at": mr["created_at"],
+                "report_title": mr["report_title"],
+                "external_title": ext["title"], "external_location": ext["location"],
+                "external_source_name": ext["source_name"], "external_source_type": ext["source_type"],
+                "external_source_url": ext["source_url"],
+            })
+        notifications = [dict(r) for r in db.execute("SELECT * FROM notifications WHERE user_id = %s ORDER BY created_at DESC", (user_id,))]
     return {"external_items": external_items, "reports": reports, "matches": matches, "notifications": notifications}
 
-def run_matching(report_id: int) -> None:
-    with closing(get_db()) as db:
-        report = db.execute("SELECT * FROM lost_reports WHERE id = ?", (report_id,)).fetchone()
-        if not report: return
-        user = db.execute("SELECT * FROM users WHERE id = ?", (report["user_id"],)).fetchone()
-        external_items = db.execute("SELECT * FROM external_items").fetchall()
-        new_matches = []
-        for external in external_items:
-            score, reasons = similarity(report, external)
-            if score < 45: continue
-            exists = db.execute("SELECT id FROM matches WHERE report_id = ? AND external_item_id = ?", (report["id"], external["id"])).fetchone()
-            if exists: continue
-            db.execute("INSERT INTO matches (report_id, external_item_id, score, reasons_json, created_at) VALUES (?, ?, ?, ?, ?)", (report["id"], external["id"], score, json.dumps(reasons, ensure_ascii=False), now_iso()))
-            new_matches.append(external)
+
+# --- Embeddings (JSON text 欄位 + Python cosine) ---
+def _ensure_report_embedding(db, report) -> list[float] | None:
+    if report.get("embedding"):
+        try:
+            return json.loads(report["embedding"])
+        except (TypeError, ValueError):
+            pass
+    if not matching.embeddings_enabled():
+        return None
+    try:
+        vec = matching.embed_text(matching.item_text(report))
+        db.execute("UPDATE lost_reports SET embedding = %s WHERE id = %s", (json.dumps(vec), report["id"]))
         db.commit()
-    if new_matches:
-        with closing(get_db()) as db:
-            for item in new_matches:
-                subject = f"新的遺失物媒合結果：{report['title']}"
-                message = f"你的遺失通報「{report['title']}」出現新的可能配對：{item['title']}（來源：{item['source_name']}，地點：{item['location']}）。"
-                db.execute("INSERT INTO notifications (user_id, subject, message, delivery, created_at) VALUES (?, ?, ?, 'email', ?)", (user["id"], subject, message, now_iso()))
-                extra = f"\n原始來源連結：{item['source_url']}" if item["source_type"] == "facebook" else ""
-                send_email(user["email"], subject, message + extra)
-            db.commit()
+        return vec
+    except Exception:
+        app.logger.exception("產生通報 embedding 失敗，改用關鍵字比對")
+        return None
+
+def _ensure_item_embedding(db, item_row, external) -> list[float] | None:
+    if item_row.get("embedding"):
+        try:
+            return json.loads(item_row["embedding"])
+        except (TypeError, ValueError):
+            pass
+    if not matching.embeddings_enabled():
+        return None
+    try:
+        vec = matching.embed_text(matching.item_text(external))
+        db.execute("UPDATE lost_items SET embedding = %s WHERE id = %s", (json.dumps(vec), item_row["id"]))
+        db.commit()
+        return vec
+    except Exception:
+        app.logger.exception("產生招領物 embedding 失敗，改用關鍵字比對")
+        return None
+
+def _ensure_all_item_embeddings(db) -> None:
+    """為尚未產生向量的招領物批次補算 embedding。"""
+    rows = db.execute("SELECT * FROM lost_items WHERE embedding IS NULL OR embedding = ''").fetchall()
+    if not rows:
+        return
+    for start in range(0, len(rows), EMBED_BATCH):
+        chunk = rows[start:start + EMBED_BATCH]
+        texts = [matching.item_text(_external_from_lost_item(r)) for r in chunk]
+        vectors = matching.embed_texts(texts)
+        for row, vec in zip(chunk, vectors):
+            db.execute("UPDATE lost_items SET embedding = %s WHERE id = %s", (json.dumps(vec), row["id"]))
+    db.commit()
+
+def _item_cosines(db, report_embedding: list[float]) -> dict[int, float]:
+    result: dict[int, float] = {}
+    for row in db.execute("SELECT id, embedding FROM lost_items WHERE embedding IS NOT NULL AND embedding <> ''"):
+        try:
+            vec = json.loads(row["embedding"])
+        except (TypeError, ValueError):
+            continue
+        result[row["id"]] = matching.cosine(report_embedding, vec)
+    return result
+
+
+# --- Matching ---
+def _try_create_match(db, report, external, cos: float | None) -> bool:
+    score, reasons = matching.blended_score(report, external, cos)
+    if score < matching.MATCH_THRESHOLD:
+        return False
+    exists = db.execute("SELECT id FROM matches WHERE report_id = %s AND lost_item_id = %s", (report["id"], external["id"])).fetchone()
+    if exists:
+        return False
+    db.execute(
+        "INSERT INTO matches (report_id, lost_item_id, score, reasons_json, created_at) VALUES (%s, %s, %s, %s, %s)",
+        (report["id"], external["id"], score, json.dumps(reasons, ensure_ascii=False), now_iso()),
+    )
+    db.commit()
+    return True
+
+def _notify_match(db, user, report, external) -> None:
+    subject = f"新的遺失物媒合結果：{report['title']}"
+    message = f"你的遺失通報「{report['title']}」出現新的可能配對：{external['title']}（來源：{external['source_name']}，地點：{external['location']}）。"
+    db.execute("INSERT INTO notifications (user_id, subject, message, delivery, created_at) VALUES (%s, %s, %s, 'email', %s)", (user["id"], subject, message, now_iso()))
+    db.commit()
+    extra = f"\n原始來源連結：{external['source_url']}" if external["source_type"] == "facebook" else ""
+    send_email(user["email"], subject, message + extra)
+
+def run_matching(report_id: int) -> None:
+    """新通報 → 比對所有招領物（lost_items），對新配對發出通知。"""
+    with closing(get_db()) as db:
+        report = db.execute("SELECT * FROM lost_reports WHERE id = %s", (report_id,)).fetchone()
+        if not report: return
+        user = db.execute("SELECT * FROM users WHERE id = %s", (report["user_id"],)).fetchone()
+        report_embedding = _ensure_report_embedding(db, report)
+        cosine_by_item = None
+        if report_embedding is not None:
+            try:
+                _ensure_all_item_embeddings(db)
+                cosine_by_item = _item_cosines(db, report_embedding)
+            except Exception:
+                app.logger.exception("語意媒合失敗，改用關鍵字比對")
+        for item_row in db.execute("SELECT * FROM lost_items").fetchall():
+            external = _external_from_lost_item(item_row)
+            cos = cosine_by_item.get(item_row["id"]) if cosine_by_item is not None else None
+            if _try_create_match(db, report, external, cos):
+                _notify_match(db, user, report, external)
+
+def run_matching_for_lost_item(lost_item_id: int) -> int:
+    """單筆招領物 → 反向比對所有現有通報，必要時建立 match 並通知失主。回傳新配對數。"""
+    new_matches = 0
+    with closing(get_db()) as db:
+        item_row = db.execute("SELECT * FROM lost_items WHERE id = %s", (lost_item_id,)).fetchone()
+        if not item_row: return 0
+        external = _external_from_lost_item(item_row)
+        item_embedding = _ensure_item_embedding(db, item_row, external)
+        # 只比對「進行中」的通報——已標記找到的不再媒合 / 通知。
+        for report in db.execute("SELECT * FROM lost_reports WHERE status = 'open'").fetchall():
+            cos = None
+            if item_embedding is not None:
+                report_embedding = _ensure_report_embedding(db, report)
+                if report_embedding is not None:
+                    cos = matching.cosine(item_embedding, report_embedding)
+            if _try_create_match(db, report, external, cos):
+                user = db.execute("SELECT * FROM users WHERE id = %s", (report["user_id"],)).fetchone()
+                _notify_match(db, user, report, external)
+                new_matches += 1
+    return new_matches
+
+def process_new_lost_items() -> dict:
+    """處理「剛爬進來、還沒算過向量」的招領物：產生 embedding 並反向比對現有通報。
+
+    爬蟲（scripts/scrapers/supa_crawl_lib.py）只負責把資料 upsert 進 lost_items；
+    這支負責後續的語意處理與媒合，適合在每次爬完後執行（task match-lostitems）。
+    """
+    with closing(get_db()) as db:
+        new_ids = [r["id"] for r in db.execute("SELECT id FROM lost_items WHERE embedding IS NULL OR embedding = '' ORDER BY id")]
+    total_matches = 0
+    for lost_item_id in new_ids:
+        total_matches += run_matching_for_lost_item(lost_item_id)
+    return {"ok": True, "processed": len(new_ids), "new_matches": total_matches}
+
 
 # --- Routes ---
 @app.route("/login", methods=["GET", "POST"])
@@ -218,7 +382,7 @@ def login():
             app.logger.exception("Failed to send Supabase OTP")
             flash("發送驗證碼失敗，請稍後再試。", "error")
             return redirect(url_for("login"))
-    
+
     # Clear stale auth state when visiting login page
     session.pop("auth_email", None)
     session.pop("auth_time", None)
@@ -228,14 +392,14 @@ def login():
 def verify():
     email = session.get("auth_email")
     auth_time = session.get("auth_time")
-    
+
     # Block if no email, or if the OTP request is older than 10 minutes (600 seconds)
     if not email or not auth_time or (datetime.now().timestamp() - auth_time > 600):
         session.pop("auth_email", None)
         session.pop("auth_time", None)
         flash("驗證已超時或無效，請重新輸入 Email。", "error")
         return redirect(url_for("login"))
-        
+
     if request.method == "POST":
         otp = request.form.get("otp", "").strip()
         if not otp:
@@ -250,30 +414,27 @@ def verify():
                 sb_user = res.user
                 with closing(get_db()) as db:
                     user = db.execute(
-                        "SELECT id, supabase_id FROM users WHERE supabase_id = ? OR email = ?",
+                        "SELECT id, supabase_id FROM users WHERE supabase_id = %s OR email = %s",
                         (sb_user.id, email),
                     ).fetchone()
                     if not user:
                         name = email.split("@")[0]
-                        db.execute(
-                            "INSERT INTO users (supabase_id, name, email, created_at) VALUES (?, ?, ?, ?)",
+                        row = db.execute(
+                            "INSERT INTO users (supabase_id, name, email, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
                             (sb_user.id, name, email, now_iso()),
-                        )
-                        db.commit()
-                        user = db.execute(
-                            "SELECT id, supabase_id FROM users WHERE supabase_id = ?",
-                            (sb_user.id,),
                         ).fetchone()
+                        db.commit()
+                        user = {"id": row["id"], "supabase_id": sb_user.id}
                     elif not user["supabase_id"]:
-                        db.execute("UPDATE users SET supabase_id = ? WHERE id = ?", (sb_user.id, user["id"]))
+                        db.execute("UPDATE users SET supabase_id = %s WHERE id = %s", (sb_user.id, user["id"]))
                         db.commit()
                 session["user_id"] = user["id"]
                 session.pop("auth_email", None)
                 session.pop("auth_time", None)
                 session.permanent = True
                 return redirect(url_for("dashboard"))
-        except Exception as e:
-            flash(f"驗證失敗: 驗證碼錯誤或已過期。", "error")
+        except Exception:
+            flash("驗證失敗: 驗證碼錯誤或已過期。", "error")
     return render_template("auth.html", step="otp", email=email)
 
 @app.route("/logout", methods=["POST"])
@@ -309,28 +470,103 @@ def sources():
     bundle.pop("external_items", None)
     return render_template("app.html", view="sources", user=user, external_items=filtered, q=q, cur_source=source, cur_cat=category, **bundle)
 
+def _read_report_form():
+    """讀取並驗證通報表單；回傳欄位 dict，不完整則回傳 None。"""
+    title = request.form.get("title", "").strip()
+    category = request.form.get("category", "").strip()
+    location = request.form.get("location", "").strip()
+    start = request.form.get("lost_date_start", "").strip()
+    end = request.form.get("lost_date_end", "").strip() or start  # 沒填結束日就視為單日
+    description = request.form.get("description", "").strip()
+    if not all([title, category, location, start, description]):
+        return None
+    if end < start:
+        start, end = end, start
+    return {"title": title, "category": category, "location": location,
+            "lost_date_start": start, "lost_date_end": end, "description": description}
+
+def _owned_report(db, rid: int, user_id: int):
+    return db.execute("SELECT * FROM lost_reports WHERE id = %s AND user_id = %s", (rid, user_id)).fetchone()
+
 @app.route("/report", methods=["GET", "POST"])
 def report():
     user_id = require_login()
     if not user_id: return redirect(url_for("login"))
     user = get_user(user_id)
     if request.method == "POST":
-        title = request.form.get("title", "").strip()
-        category = request.form.get("category", "").strip()
-        location = request.form.get("location", "").strip()
-        lost_at = request.form.get("lost_at", "").strip()
-        description = request.form.get("description", "").strip()
-        if all([title, category, location, lost_at, description]):
+        data = _read_report_form()
+        if data:
             with closing(get_db()) as db:
-                db.execute("INSERT INTO lost_reports (user_id, title, category, location, lost_at, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (user_id, title, category, location, lost_at, description, now_iso()))
+                row = db.execute(
+                    "INSERT INTO lost_reports (user_id, title, category, location, lost_date_start, lost_date_end, description, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (user_id, data["title"], data["category"], data["location"], data["lost_date_start"], data["lost_date_end"], data["description"], now_iso()),
+                ).fetchone()
                 db.commit()
-                report_id = db.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+                report_id = row["id"]
             run_matching(report_id)
             flash("通報已成功送出！", "info")
             return redirect(url_for("matches"))
-        else:
-            flash("請完整填寫通報資訊。", "error")
+        flash("請完整填寫通報資訊。", "error")
     return render_template("app.html", view="report", user=user, **fetch_bundle(user_id))
+
+@app.route("/report/<int:rid>/edit", methods=["GET", "POST"])
+def edit_report(rid):
+    user_id = require_login()
+    if not user_id: return redirect(url_for("login"))
+    user = get_user(user_id)
+    with closing(get_db()) as db:
+        rep = _owned_report(db, rid, user_id)
+    if not rep:
+        flash("找不到該通報。", "error")
+        return redirect(url_for("report"))
+    if request.method == "POST":
+        data = _read_report_form()
+        if data:
+            with closing(get_db()) as db:
+                # 內容改變 → 清掉舊 embedding 與舊媒合、狀態回到進行中，再重新比對。
+                db.execute("DELETE FROM matches WHERE report_id = %s", (rid,))
+                db.execute(
+                    "UPDATE lost_reports SET title=%s, category=%s, location=%s, lost_date_start=%s, lost_date_end=%s, description=%s, embedding=NULL, status='open' WHERE id=%s AND user_id=%s",
+                    (data["title"], data["category"], data["location"], data["lost_date_start"], data["lost_date_end"], data["description"], rid, user_id),
+                )
+                db.commit()
+            run_matching(rid)
+            flash("通報已更新並重新比對。", "info")
+            return redirect(url_for("matches"))
+        flash("請完整填寫通報資訊。", "error")
+    return render_template("app.html", view="report", user=user, edit_report=dict(rep), **fetch_bundle(user_id))
+
+@app.route("/report/<int:rid>/resolve", methods=["POST"])
+def resolve_report(rid):
+    user_id = require_login()
+    if user_id:
+        with closing(get_db()) as db:
+            db.execute("UPDATE lost_reports SET status='resolved' WHERE id=%s AND user_id=%s", (rid, user_id))
+            db.commit()
+        flash("已標記為找到，將不再為此通報媒合。", "info")
+    return redirect(url_for("report"))
+
+@app.route("/report/<int:rid>/reopen", methods=["POST"])
+def reopen_report(rid):
+    user_id = require_login()
+    if user_id:
+        with closing(get_db()) as db:
+            db.execute("UPDATE lost_reports SET status='open' WHERE id=%s AND user_id=%s", (rid, user_id))
+            db.commit()
+        flash("已重新開啟通報。", "info")
+    return redirect(url_for("report"))
+
+@app.route("/report/<int:rid>/delete", methods=["POST"])
+def delete_report(rid):
+    user_id = require_login()
+    if user_id:
+        with closing(get_db()) as db:
+            if _owned_report(db, rid, user_id):
+                db.execute("DELETE FROM matches WHERE report_id = %s", (rid,))
+                db.execute("DELETE FROM lost_reports WHERE id=%s AND user_id=%s", (rid, user_id))
+                db.commit()
+                flash("通報已刪除。", "info")
+    return redirect(url_for("report"))
 
 @app.route("/matches")
 def matches():
@@ -349,7 +585,7 @@ def read_all_notifications():
     user_id = require_login()
     if user_id:
         with closing(get_db()) as db:
-            db.execute("UPDATE notifications SET is_read = 1 WHERE user_id = ?", (user_id,))
+            db.execute("UPDATE notifications SET is_read = 1 WHERE user_id = %s", (user_id,))
             db.commit()
     return redirect(url_for("notifications"))
 

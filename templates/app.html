@@ -6,7 +6,7 @@
       <p class="eyebrow">NTU LOST & FOUND</p>
       <h2>台大失物招領</h2>
       {% if user %}
-        <p class="muted-text">{{ user.name }}，{{ user.email }}</p>
+        <p class="muted-text">{{ user.email }}</p>
       {% else %}
         <p class="muted-text">訪客模式 (未登入)</p>
       {% endif %}
@@ -29,7 +29,7 @@
     </div>
 
     {% if user %}
-      <form action="{{ url_for('logout') }}" method="POST" style="width:100%;">
+      <form action="{{ url_for('logout') }}" method="POST" class="sidebar-auth">
         <button type="submit" class="ghost-btn full-btn">登出</button>
       </form>
     {% else %}
@@ -62,7 +62,7 @@
         <form action="{{ url_for('sources') }}" method="GET" style="display:flex; gap: 12px; align-items: center;">
           <input name="q" type="text" placeholder="搜尋物品、地點、來源..." value="{{ q or '' }}" />
           {% if view == 'sources' %}
-            <select name="source" onchange="this.form.submit()" style="width: auto; padding: 13px 14px;">
+            <select name="source" onchange="this.form.submit()" class="inline-select">
               <option value="all" {% if cur_source == 'all' %}selected{% endif %}>全部來源</option>
               {% if user %}
                 <option value="FB交流版" {% if cur_source == 'FB交流版' %}selected{% endif %}>FB交流版</option>
@@ -70,13 +70,11 @@
               <option value="總圖書館" {% if cur_source == '總圖書館' %}selected{% endif %}>總圖書館</option>
               <option value="駐警隊" {% if cur_source == '駐警隊' %}selected{% endif %}>駐警隊</option>
             </select>
-            <select name="category" onchange="this.form.submit()" style="width: auto; padding: 13px 14px;">
+            <select name="category" onchange="this.form.submit()" class="inline-select">
               <option value="all" {% if cur_cat == 'all' %}selected{% endif %}>全部類型</option>
-              <option value="電子產品" {% if cur_cat == '電子產品' %}selected{% endif %}>電子產品</option>
-              <option value="證件" {% if cur_cat == '證件' %}selected{% endif %}>證件</option>
-              <option value="日用品" {% if cur_cat == '日用品' %}selected{% endif %}>日用品</option>
-              <option value="配件" {% if cur_cat == '配件' %}selected{% endif %}>配件</option>
-              <option value="衣物" {% if cur_cat == '衣物' %}selected{% endif %}>衣物</option>
+              {% for c in categories %}
+              <option value="{{ c }}" {% if cur_cat == c %}selected{% endif %}>{{ c }}</option>
+              {% endfor %}
             </select>
           {% endif %}
         </form>
@@ -197,22 +195,27 @@
     <section class="view active">
       <div class="content-grid report-grid">
         <section class="panel">
-          <div class="panel-head"><h3>提報我遺失的物品</h3><span>填寫越完整，越容易比對到相近招領物。</span></div>
-          <form action="{{ url_for('report') }}" method="POST" class="form-grid">
-            <label><span>物品名稱</span><input name="title" type="text" placeholder="例如：黑色 AirPods Pro" required /></label>
+          <div class="panel-head">
+            <h3>{% if edit_report %}編輯遺失通報{% else %}提報我遺失的物品{% endif %}</h3>
+            <span>填寫越完整，越容易比對到相近招領物。</span>
+          </div>
+          <form action="{% if edit_report %}{{ url_for('edit_report', rid=edit_report.id) }}{% else %}{{ url_for('report') }}{% endif %}" method="POST" class="form-grid">
+            <label><span>物品名稱</span><input name="title" type="text" placeholder="例如：黑色 AirPods Pro" value="{{ edit_report.title if edit_report else '' }}" required /></label>
             <label><span>類型</span>
               <select name="category" required>
-                <option value="電子產品">電子產品</option>
-                <option value="證件">證件</option>
-                <option value="日用品">日用品</option>
-                <option value="配件">配件</option>
-                <option value="衣物">衣物</option>
+                {% for c in categories %}
+                <option value="{{ c }}" {% if edit_report and edit_report.category == c %}selected{% endif %}>{{ c }}</option>
+                {% endfor %}
               </select>
             </label>
-            <label><span>遺失地點</span><input name="location" type="text" placeholder="例如：總圖 2F 自習區" required /></label>
-            <label><span>遺失時間</span><input name="lost_at" type="datetime-local" required /></label>
-            <label class="full-width"><span>特徵描述</span><textarea name="description" rows="5" placeholder="例如：黑色保護殼、有白色貼紙。" required></textarea></label>
-            <div class="form-actions full-width"><button type="submit" class="primary-btn">送出通報</button></div>
+            <label><span>遺失地點</span><input name="location" type="text" placeholder="例如：總圖 2F 自習區" value="{{ edit_report.location if edit_report else '' }}" required /></label>
+            <label><span>遺失日期（最早）</span><input name="lost_date_start" type="date" value="{{ edit_report.lost_date_start if edit_report else '' }}" required /></label>
+            <label><span>遺失日期（最晚，不確定可留空）</span><input name="lost_date_end" type="date" value="{{ edit_report.lost_date_end if edit_report else '' }}" /></label>
+            <label class="full-width"><span>特徵描述</span><textarea name="description" rows="5" placeholder="例如：黑色保護殼、有白色貼紙。" required>{{ edit_report.description if edit_report else '' }}</textarea></label>
+            <div class="form-actions full-width" style="display:flex; gap:12px;">
+              <button type="submit" class="primary-btn">{% if edit_report %}更新通報{% else %}送出通報{% endif %}</button>
+              {% if edit_report %}<a href="{{ url_for('report') }}" class="ghost-btn" style="display:flex; align-items:center;">取消</a>{% endif %}
+            </div>
           </form>
         </section>
         <section class="panel">
@@ -220,9 +223,24 @@
           <div class="list-stack">
             {% for report in reports %}
             <div class="feed-item">
-              <div class="feed-head"><strong>{{ report.title }}</strong><span class="chip">已通報</span></div>
-              <div class="item-meta">{{ report.category }} ・ {{ report.location }} ・ {{ report.lost_at|format_time }}</div>
+              <div class="feed-head">
+                <strong>{{ report.title }}</strong>
+                {% if report.status == 'resolved' %}<span class="chip">已找到</span>{% else %}<span class="chip">進行中</span>{% endif %}
+              </div>
+              <div class="item-meta">
+                {{ report.category }} ・ {{ report.location }} ・
+                {{ report.lost_date_start }}{% if report.lost_date_end and report.lost_date_end != report.lost_date_start %} ~ {{ report.lost_date_end }}{% endif %}
+              </div>
               <p>{{ report.description }}</p>
+              <div class="report-actions" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+                <a href="{{ url_for('edit_report', rid=report.id) }}" class="ghost-btn">編輯</a>
+                {% if report.status == 'resolved' %}
+                <form action="{{ url_for('reopen_report', rid=report.id) }}" method="POST"><button type="submit" class="ghost-btn">重新開啟</button></form>
+                {% else %}
+                <form action="{{ url_for('resolve_report', rid=report.id) }}" method="POST"><button type="submit" class="ghost-btn">標記找到</button></form>
+                {% endif %}
+                <form action="{{ url_for('delete_report', rid=report.id) }}" method="POST" onsubmit="return confirm('確定刪除這筆通報？');"><button type="submit" class="ghost-btn">刪除</button></form>
+              </div>
             </div>
             {% else %}
             <div class="empty-state">你還沒有遺失通報。</div>
