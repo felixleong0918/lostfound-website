@@ -1,0 +1,47 @@
+name: Crawl NTU library lost & found
+
+# 在 GitHub runner 上跑爬蟲，避免 Supabase 排程 / Edge Function 被擋的問題。
+# runner 的對外 IP 與 Supabase 不同，通常不會被圖書館站台封鎖。
+on:
+  schedule:
+    # 每天 16:00 UTC（約台灣午夜）。爬蟲有 7 天 watermark，每日跑一次即可。
+    - cron: "0 16 * * *"
+  workflow_dispatch: {}  # 也可在 Actions 頁面手動觸發
+
+concurrency:
+  group: scrape-lib
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt requests beautifulsoup4
+
+      - name: Run library crawler (-> lost_items)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python scripts/scrapers/supa_crawl_lib.py
+
+      - name: Embed + match new items (-> matches/notifications)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
+          # SMTP_* 為選用；沒設定時通知仍會寫進資料庫，只是不寄信。
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
+        run: python scripts/match_lost_items.py
