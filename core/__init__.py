@@ -32,6 +32,19 @@ def create_app() -> Flask:
     def get_items():
         from core.models import LostItem
         items = LostItem.query.order_by(LostItem.found_date.desc()).all()
-        return jsonify([item.to_dict() for item in items])
+        return jsonify([
+            {
+                "id": item.id,
+                "source_system": item.source_system,
+                "original_id": item.original_id,
+                "found_date": item.found_date,
+                "location": item.location,
+                "description": item.description,
+                "category": item.category,
+                "storage_place": item.storage_place,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+            }
+            for item in items
+        ])
 
     return app
