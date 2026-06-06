@@ -55,6 +55,11 @@ def from_json(s):
     except Exception:
         return []
 
+@app.context_processor
+def inject_globals():
+    # 通報表單與篩選共用同一組正規類別，確保選項一致。
+    return {"categories": matching.CANONICAL_CATEGORIES}
+
 
 # --- Database ---
 def get_db() -> psycopg.Connection:
@@ -82,13 +87,18 @@ _SCHEMA_STATEMENTS = [
         email text NOT NULL UNIQUE,
         created_at text NOT NULL
     )""",
+    # lost_date_start / lost_date_end 為日期區間（YYYY-MM-DD）；使用者通常記不清確切時間，
+    # 且圖書館資料只有日期，故以「天」為精度的區間取代原本精確到分鐘的單一時刻。
+    # status：open（進行中）/ resolved（已找到）。
     """CREATE TABLE IF NOT EXISTS lost_reports (
         id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
         user_id bigint NOT NULL REFERENCES users(id),
         title text NOT NULL,
         category text,
         location text,
-        lost_at text NOT NULL,
+        lost_date_start text,
+        lost_date_end text,
+        status text NOT NULL DEFAULT 'open',
         description text,
         embedding text,
         created_at text NOT NULL
@@ -114,6 +124,12 @@ _SCHEMA_STATEMENTS = [
     )""",
     # 招領物的語意向量（JSON 陣列存 text；資料量小，於 Python 端算 cosine）。
     "ALTER TABLE lost_items ADD COLUMN IF NOT EXISTS embedding text",
+    # --- 既有資料庫的欄位遷移（CREATE TABLE IF NOT EXISTS 不會改既有表）---
+    "ALTER TABLE lost_reports ADD COLUMN IF NOT EXISTS lost_date_start text",
+    "ALTER TABLE lost_reports ADD COLUMN IF NOT EXISTS lost_date_end text",
+    "ALTER TABLE lost_reports ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'open'",
+    # 舊的精確到分鐘的單一時刻欄位不再使用（無正式資料）。
+    "ALTER TABLE lost_reports DROP COLUMN IF EXISTS lost_at",
 ]
 
 def init_db() -> None:
@@ -182,7 +198,7 @@ def fetch_bundle(user_id: int | None) -> dict:
             external_items = [e for e in external_items if e["source_type"] != "facebook"]
             return {"external_items": external_items, "reports": [], "matches": [], "notifications": []}
 
-        reports = [dict(r) for r in db.execute("SELECT * FROM lost_reports WHERE user_id = %s ORDER BY lost_at DESC", (user_id,))]
+        reports = [dict(r) for r in db.execute("SELECT * FROM lost_reports WHERE user_id = %s ORDER BY created_at DESC", (user_id,))]
         match_rows = db.execute(
             """SELECT m.id, m.score, m.reasons_json, m.created_at, r.title AS report_title,
                       li.source_system, li.original_id, li.found_date, li.location,
@@ -318,7 +334,8 @@ def run_matching_for_lost_item(lost_item_id: int) -> int:
         if not item_row: return 0
         external = _external_from_lost_item(item_row)
         item_embedding = _ensure_item_embedding(db, item_row, external)
-        for report in db.execute("SELECT * FROM lost_reports").fetchall():
+        # 只比對「進行中」的通報——已標記找到的不再媒合 / 通知。
+        for report in db.execute("SELECT * FROM lost_reports WHERE status = 'open'").fetchall():
             cos = None
             if item_embedding is not None:
                 report_embedding = _ensure_report_embedding(db, report)
@@ -453,31 +470,103 @@ def sources():
     bundle.pop("external_items", None)
     return render_template("app.html", view="sources", user=user, external_items=filtered, q=q, cur_source=source, cur_cat=category, **bundle)
 
+def _read_report_form():
+    """讀取並驗證通報表單；回傳欄位 dict，不完整則回傳 None。"""
+    title = request.form.get("title", "").strip()
+    category = request.form.get("category", "").strip()
+    location = request.form.get("location", "").strip()
+    start = request.form.get("lost_date_start", "").strip()
+    end = request.form.get("lost_date_end", "").strip() or start  # 沒填結束日就視為單日
+    description = request.form.get("description", "").strip()
+    if not all([title, category, location, start, description]):
+        return None
+    if end < start:
+        start, end = end, start
+    return {"title": title, "category": category, "location": location,
+            "lost_date_start": start, "lost_date_end": end, "description": description}
+
+def _owned_report(db, rid: int, user_id: int):
+    return db.execute("SELECT * FROM lost_reports WHERE id = %s AND user_id = %s", (rid, user_id)).fetchone()
+
 @app.route("/report", methods=["GET", "POST"])
 def report():
     user_id = require_login()
     if not user_id: return redirect(url_for("login"))
     user = get_user(user_id)
     if request.method == "POST":
-        title = request.form.get("title", "").strip()
-        category = request.form.get("category", "").strip()
-        location = request.form.get("location", "").strip()
-        lost_at = request.form.get("lost_at", "").strip()
-        description = request.form.get("description", "").strip()
-        if all([title, category, location, lost_at, description]):
+        data = _read_report_form()
+        if data:
             with closing(get_db()) as db:
                 row = db.execute(
-                    "INSERT INTO lost_reports (user_id, title, category, location, lost_at, description, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                    (user_id, title, category, location, lost_at, description, now_iso()),
+                    "INSERT INTO lost_reports (user_id, title, category, location, lost_date_start, lost_date_end, description, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (user_id, data["title"], data["category"], data["location"], data["lost_date_start"], data["lost_date_end"], data["description"], now_iso()),
                 ).fetchone()
                 db.commit()
                 report_id = row["id"]
             run_matching(report_id)
             flash("通報已成功送出！", "info")
             return redirect(url_for("matches"))
-        else:
-            flash("請完整填寫通報資訊。", "error")
+        flash("請完整填寫通報資訊。", "error")
     return render_template("app.html", view="report", user=user, **fetch_bundle(user_id))
+
+@app.route("/report/<int:rid>/edit", methods=["GET", "POST"])
+def edit_report(rid):
+    user_id = require_login()
+    if not user_id: return redirect(url_for("login"))
+    user = get_user(user_id)
+    with closing(get_db()) as db:
+        rep = _owned_report(db, rid, user_id)
+    if not rep:
+        flash("找不到該通報。", "error")
+        return redirect(url_for("report"))
+    if request.method == "POST":
+        data = _read_report_form()
+        if data:
+            with closing(get_db()) as db:
+                # 內容改變 → 清掉舊 embedding 與舊媒合、狀態回到進行中，再重新比對。
+                db.execute("DELETE FROM matches WHERE report_id = %s", (rid,))
+                db.execute(
+                    "UPDATE lost_reports SET title=%s, category=%s, location=%s, lost_date_start=%s, lost_date_end=%s, description=%s, embedding=NULL, status='open' WHERE id=%s AND user_id=%s",
+                    (data["title"], data["category"], data["location"], data["lost_date_start"], data["lost_date_end"], data["description"], rid, user_id),
+                )
+                db.commit()
+            run_matching(rid)
+            flash("通報已更新並重新比對。", "info")
+            return redirect(url_for("matches"))
+        flash("請完整填寫通報資訊。", "error")
+    return render_template("app.html", view="report", user=user, edit_report=dict(rep), **fetch_bundle(user_id))
+
+@app.route("/report/<int:rid>/resolve", methods=["POST"])
+def resolve_report(rid):
+    user_id = require_login()
+    if user_id:
+        with closing(get_db()) as db:
+            db.execute("UPDATE lost_reports SET status='resolved' WHERE id=%s AND user_id=%s", (rid, user_id))
+            db.commit()
+        flash("已標記為找到，將不再為此通報媒合。", "info")
+    return redirect(url_for("report"))
+
+@app.route("/report/<int:rid>/reopen", methods=["POST"])
+def reopen_report(rid):
+    user_id = require_login()
+    if user_id:
+        with closing(get_db()) as db:
+            db.execute("UPDATE lost_reports SET status='open' WHERE id=%s AND user_id=%s", (rid, user_id))
+            db.commit()
+        flash("已重新開啟通報。", "info")
+    return redirect(url_for("report"))
+
+@app.route("/report/<int:rid>/delete", methods=["POST"])
+def delete_report(rid):
+    user_id = require_login()
+    if user_id:
+        with closing(get_db()) as db:
+            if _owned_report(db, rid, user_id):
+                db.execute("DELETE FROM matches WHERE report_id = %s", (rid,))
+                db.execute("DELETE FROM lost_reports WHERE id=%s AND user_id=%s", (rid, user_id))
+                db.commit()
+                flash("通報已刪除。", "info")
+    return redirect(url_for("report"))
 
 @app.route("/matches")
 def matches():

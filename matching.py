@@ -32,10 +32,13 @@ EMBED_DIM = 1024
 JINA_TIMEOUT = 60  # 批次請求較大，給寬一點的逾時秒數
 
 # --- 評分權重（可依實際資料微調）---
-CATEGORY_POINTS = 25      # 類型完全一致
-LOCATION_POINTS = 15      # 地點前綴相近
-TIME_CLOSE_POINTS = 15    # 時間 <= 6 小時
-TIME_OK_POINTS = 8        # 時間 <= 24 小時
+CATEGORY_POINTS = 25      # 類型一致
+LOCATION_POINTS = 15      # 地點相近
+TIME_IN_RANGE_POINTS = 15 # 拾獲日落在通報的遺失日期區間內的分數
+TIME_OK_POINTS = 8        # 距區間 <= 2 天的分數
+TIME_NEAR_POINTS = 4      # 距區間 <= 5 天的分數
+TIME_SLACK_OK_DAYS = 2
+TIME_SLACK_NEAR_DAYS = 5
 SEMANTIC_MAX = 45         # 語意相似最高加分
 SEMANTIC_FLOOR = 0.35     # cosine 低於此值不計語意分（過濾雜訊）
 KEYWORD_MAX = 25          # 無向量時的關鍵字 fallback 上限
@@ -77,6 +80,63 @@ LOCATION_ALIASES: dict[str, str] = _load_location_aliases()
 # 先換較長的簡稱，避免「第一活動中心」被「活」之類的短鍵搶先替換。
 _ALIAS_ORDER = sorted(LOCATION_ALIASES, key=len, reverse=True)
 _CANONICAL_PLACES = set(LOCATION_ALIASES.values())
+
+
+# --- 物品類型正規化 ---
+# 各來源（圖書館等）的類型字串很雜（如「其他 充電線」「影印卡、悠遊卡」），和使用者通報
+# 表單的固定選項對不上，導致「類型一致」加分與類型篩選幾乎失效。這裡用關鍵字規則把任意
+# 類型字串收斂成一組正規類別；通報表單與篩選也都用同一組類別，確保兩邊可對齊。
+#
+# 規則存在 category_rules.json（正規類別 → 關鍵字清單），方便直接增修。
+# 比對採「由上到下、命中關鍵字即歸類」，所以順序有意義（例：現金/錢包 要在 包包 之前，
+# 「錢包」才不會被「包」搶走）。最後一類請保留為 fallback（關鍵字清單留空）。
+_FALLBACK_CATEGORY_RULES: dict[str, list[str]] = {
+    "電子產品": ["充電", "傳輸線", "耳機", "滑鼠", "鍵盤", "隨身碟", "行動電源", "轉接", "usb"],
+    "證件/卡片": ["學生證", "證件", "悠遊卡", "影印卡", "卡片"],
+    "現金/錢包": ["現金", "錢包", "皮夾"],
+    "鑰匙": ["鑰匙", "鑰"],
+    "雨傘": ["雨傘", "傘"],
+    "水壺/餐具": ["水壺", "水杯", "保溫"],
+    "書籍/文具": ["筆記本", "期刊", "圖書"],
+    "包包": ["背包", "後背", "包包"],
+    "衣物/配件": ["外套", "衣物", "帽"],
+    "其他": [],
+}
+_CATEGORY_RULES_PATH = Path(__file__).resolve().parent / "category_rules.json"
+
+
+def _load_category_rules() -> dict[str, list[str]]:
+    try:
+        with _CATEGORY_RULES_PATH.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+        if isinstance(data, dict) and all(
+            isinstance(k, str) and isinstance(v, list) and all(isinstance(x, str) for x in v)
+            for k, v in data.items()
+        ) and data:
+            return data
+    except FileNotFoundError:
+        pass
+    except (ValueError, OSError):
+        pass
+    return dict(_FALLBACK_CATEGORY_RULES)
+
+
+CATEGORY_RULES: dict[str, list[str]] = _load_category_rules()
+# 通報表單 / 篩選用的正規類別清單（順序即 JSON 的順序）。
+CANONICAL_CATEGORIES: list[str] = list(CATEGORY_RULES.keys())
+_CATEGORY_FALLBACK = CANONICAL_CATEGORIES[-1] if CANONICAL_CATEGORIES else "其他"
+
+
+def canonical_category(raw: str | None) -> str:
+    """把任意來源的類型字串收斂成一組正規類別；對不上時歸到最後一類（其他）。"""
+    if not raw:
+        return _CATEGORY_FALLBACK
+    text = raw.lower()
+    for canonical, keywords in CATEGORY_RULES.items():
+        for kw in keywords:
+            if kw.lower() in text:
+                return canonical
+    return _CATEGORY_FALLBACK
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +244,39 @@ def _location_match(report_location: str, external_location: str) -> bool:
     return bool(r[:2]) and (r[:2] in e or e[:2] in r)
 
 
+def _as_date(value):
+    """把日期或日期時間字串轉成 date；失敗則回傳 None。"""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value)).date()
+    except ValueError:
+        return None
+
+
+def _time_score(report, external) -> tuple[int, str | None]:
+    """以「天」為精度，比對通報的遺失日期區間與招領物的拾獲日期。
+
+    使用者常記不清確切時間、圖書館資料也只有日期，所以用區間 + 寬限天數，
+    而非精確到分鐘的單一時刻。
+    """
+    start = _as_date(report.get("lost_date_start"))
+    end = _as_date(report.get("lost_date_end")) or start
+    found = _as_date(external.get("found_at"))
+    if start is None or found is None:
+        return 0, None
+    if end < start:
+        start, end = end, start
+    if start <= found <= end:
+        return TIME_IN_RANGE_POINTS, "時間吻合"
+    gap = (start - found).days if found < start else (found - end).days
+    if gap <= TIME_SLACK_OK_DAYS:
+        return TIME_OK_POINTS, "時間接近"
+    if gap <= TIME_SLACK_NEAR_DAYS:
+        return TIME_NEAR_POINTS, "時間大致符合"
+    return 0, None
+
+
 def _structured_score(report, external) -> tuple[int, list[str]]:
     score = 0
     reasons: list[str] = []
@@ -193,15 +286,10 @@ def _structured_score(report, external) -> tuple[int, list[str]]:
     if _location_match(report["location"], external["location"]):
         score += LOCATION_POINTS
         reasons.append("地點相近")
-    report_time = datetime.fromisoformat(report["lost_at"])
-    external_time = datetime.fromisoformat(external["found_at"])
-    diff_hours = abs((external_time - report_time).total_seconds()) / 3600
-    if diff_hours <= 6:
-        score += TIME_CLOSE_POINTS
-        reasons.append("時間高度接近")
-    elif diff_hours <= 24:
-        score += TIME_OK_POINTS
-        reasons.append("時間落在合理範圍")
+    time_points, time_reason = _time_score(report, external)
+    if time_points:
+        score += time_points
+        reasons.append(time_reason)
     return score, reasons
 
 
