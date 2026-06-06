@@ -19,7 +19,7 @@ def seed_database(csv_filepath: str, source_name: str):
         print(f"Error: Could not find {csv_filepath}")
         return
 
-    df = pd.read_csv(csv_filepath)
+    df = pd.read_csv(csv_filepath, encoding="utf-8-sig")
     print(f"Found {len(df)} records in CSV. Beginning import...")
 
     with app.app_context():
