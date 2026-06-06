@@ -2,12 +2,17 @@ version: '3'
 
 tasks:
   install:
-    desc: Install project dependencies from requirements.txt
+    desc: "Install dev dependencies via Poetry (source of truth). Pip alternative: pip install -r requirements.txt"
     cmds:
-      - python3 -m pip install --user -r requirements.txt
-  
+      - poetry install
+
+  export-reqs:
+    desc: Regenerate requirements.txt from pyproject (the artifact Vercel/Docker install from)
+    cmds:
+      - poetry export --without-hashes -f requirements.txt -o requirements.txt
+
   setup-supabase:
-    desc: Initialize Supabase tables
+    desc: Create all tables in Supabase Postgres (lost_items + users/lost_reports/matches/notifications)
     cmds:
       - python3 scripts/setup_db.py
       
@@ -20,7 +25,12 @@ tasks:
     desc: Run the Python BeautifulSoup scraper locally and push to Supabase
     cmds:
       - python3 scripts/scrapers/supa_crawl_lib.py
-  
+
+  match-lostitems:
+    desc: Embed newly scraped lost_items and match them against existing reports
+    cmds:
+      - python3 scripts/match_lost_items.py
+
   cleanup:
     desc: Stop local server on the configured frontend port
     cmds:
@@ -61,10 +71,3 @@ tasks:
       PORT="{{default "8000" .PORT}}"
       HOST="{{default "127.0.0.1" .HOST}}"
       open "http://$HOST:$PORT"
-
-  reset-demo:
-    desc: Reset browser-side cached data instructions
-    cmds:
-    - |
-      echo "Browser-side cached UI state can be cleared in DevTools -> Application -> Local Storage."
-      echo "Server-side records live in lostfound.db."
