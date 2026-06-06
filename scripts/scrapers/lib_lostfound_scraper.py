@@ -54,8 +54,6 @@ def scrape_lost_and_found(base_url, max_pages):
     df.to_csv('training_data.csv', index=False, encoding='utf-8-sig')
     print(f"Scraping complete! Saved {len(df)} records to training_data.csv")
 
-# --- Usage ---
-# Replace with your actual target URL
-TARGET_URL = "https://lostfound.lib.ntu.edu.tw/" 
-# Set how many pages you want to iterate through for your training data
-scrape_lost_and_found(TARGET_URL, max_pages=55)
+if __name__ == "__main__":
+    TARGET_URL = "https://lostfound.lib.ntu.edu.tw/"
+    scrape_lost_and_found(TARGET_URL, max_pages=55)
