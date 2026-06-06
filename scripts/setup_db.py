@@ -15,9 +15,15 @@ def main():
         print("Connecting to database cluster...")
         
         import core.models
-        
+
         db.create_all()
-        print("Initialization successful! table structure verified.")
+        print("Initialization successful! lost_items table verified.")
+
+        # 建立應用自有資料表（users / lost_reports / matches / notifications）
+        # 與 lost_items.embedding 欄位；app.init_db() 是 idempotent 的。
+        import app as webapp
+        webapp.init_db()
+        print("Initialization successful! app tables (users/lost_reports/matches/notifications) verified.")
 
         supabase_url = os.environ.get("SUPABASE_URL")
         supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")

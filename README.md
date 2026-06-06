@@ -1,208 +1,146 @@
-# NTU Lost ETL Hub
+# NTU 校園失物招領聚合平台
 
-這個 repo 現在定位成 **正式產品的前端與介面層專案**，用來展示並承接台大校園失物 ETL 聚合平台的核心使用流程。
+把台大各來源的「拾獲物」資料聚合起來，讓使用者只要提報「自己掉了什麼」，系統就用
+**語意比對**找出可能的招領物並寄出通知。
 
-也就是說，這份 codebase 的責任是：
+- 來源資料由爬蟲匯入 Supabase Postgres 的 `lost_items`
+- 使用者用台大信箱（`@ntu.edu.tw`）以 OTP 驗證碼登入
+- 提報遺失物後，系統用 **Jina embeddings 語意相似度 + 類型/地點/時間** 混合評分媒合
+- 命中時建立站內通知並寄 email
 
-- 展示 ETL 聚合型失物平台的前端流程
-- 呈現登入 / 註冊頁
-- 呈現遺失物招領名單與來源欄位
-- 提供使用者提報遺失物的互動
-- 呈現媒合結果與 email 通知體驗
-- 定義前後端整合所需的 API contract
-- 以 `Flask` 實作核心的 `auth/register/report-lost`
+> 設計上只提報「遺失」、不開放上傳「拾獲」——拾獲資料一律由各來源爬蟲匯入。
 
-不在這個 repo 裡做的事：
+## 架構總覽
 
-- 完整的資料擷取排程
-- 各來源的正式 crawler / connector
-- 生產等級的部署與監控配置
+```
+圖書館等來源網站
+      │  爬蟲（scripts/scrapers/supa_crawl_lib.py）
+      ▼
+Supabase Postgres：lost_items（招領物）
+      │  embed + 反向媒合（scripts/match_lost_items.py）
+      ▼
+matches / notifications  ←─ 使用者提報（app.py 即時正向媒合）
+      ▲
+      │  Flask 伺服器渲染 UI（OTP 登入、來源名單、提報、媒合、通知）
+   使用者
+```
 
-## 系統分工
-
-目前專案採前後端整合：
-
-- 前端負責登入 / 註冊頁、來源名單、遺失物提報、媒合結果與通知體驗
-- `Flask` 後端負責 `auth/register`、資料寫入、媒合與 email 通知
-- API 結構定義於 [API_CONTRACT.md](/Users/felix/.openclaw/workspace/lostfound-website/API_CONTRACT.md)
-
-這代表它不是單純的視覺稿，而是已經帶有可運作 Python backend 的產品雛形；完整 ETL 擷取與生產部署仍可繼續擴充。
-
-## 產品方向
-
-### 1. 不提供拾得物上傳
-
-這個平台現在不是一般雙向 lost-and-found board，而是更純的 ETL 聚合前端：
-
-- 外部來源先匯入招領資料
-- 使用者只需提報「自己遺失了什麼」
-- 系統列出可能配對
-
-### 2. 招領名單必須標示來源
-
-目前產品整合的來源有：
-
-- `FB交流版`
-- `圖書館遺失版`
-- `駐警隊`
-
-其中：
-
-- `FB交流版` 只放原始貼文連結
-- 其他來源直接顯示來源名稱
-
-### 3. 登入註冊要提醒 NTU email
-
-UI 上會明確提醒：
-
-- 請使用 `@ntu.edu.tw` 信箱註冊
-- 請使用 `@ntu.edu.tw` 信箱登入
-
-前端會先提醒並驗證這件事，後端也應再做一次正式驗證。
+- **資料庫**：Supabase Postgres（透過 transaction pooler 連線；無本地 SQLite）
+- **認證**：Supabase Auth Email OTP
+- **語意比對**：Jina embeddings v3（未設金鑰時自動退回關鍵字比對）
+- **前端**：Flask + Jinja 伺服器端渲染
 
 ## 專案結構
 
 ```text
 lostfound-website/
-├── app.py
-├── index.html
-├── requirements.txt
-├── script.js
-├── styles.css
-├── API_CONTRACT.md
-└── README.md
+├── app.py                  # Flask 網站（UI 路由 + 媒合引擎，psycopg 直連 Postgres）
+├── matching.py             # 語意 + 結構化混合評分、地點簡稱正規化（純函式）
+├── bridge.py               # 把 lost_items 列映射成 UI/媒合用的形狀
+├── location_aliases.json   # 台大地點簡稱 → 正式名稱（可自行擴充）
+├── core/                   # SQLAlchemy 模型 + app factory（給設定 / 匯入腳本用）
+│   ├── __init__.py         #   create_app()（提供 DB context）
+│   ├── extensions.py       #   db = SQLAlchemy()
+│   └── models.py           #   LostItem（lost_items 表）
+├── scripts/
+│   ├── setup_db.py         # 一次建立所有資料表（task setup-supabase）
+│   ├── seed_from_csv.py    # 選用：用 CSV 灌 lost_items
+│   ├── match_lost_items.py # 對新爬到的招領物算向量 + 媒合（task match-lostitems）
+│   └── scrapers/
+│       ├── supa_crawl_lib.py        # 正式爬蟲 → lost_items（task crawl-lib）
+│       └── lib_lostfound_scraper.py # 原型爬蟲 → CSV（開發用）
+├── templates/              # auth.html / app.html / layout.html
+├── static/styles.css
+├── supabase/
+│   ├── schema.sql          # 應用資料表（參考；實際由 setup_db 建立）
+│   └── pgvector.sql        # 選用：之後升級成 pgvector 的步驟
+├── api/index.py            # Vercel WSGI 進入點
+├── vercel.json             # Vercel 部署設定
+├── Dockerfile              # 自架容器（Vercel 以外的選項）
+├── Taskfile.yml            # 指令集（開發 + 維運）
+├── pyproject.toml          # 相依套件「來源」（Poetry）
+└── requirements.txt        # 由 pyproject 匯出的部署用清單（Vercel/Docker 安裝它）
 ```
 
-## 本地執行
+## 環境變數
 
-這個版本需要本機有 Python 3，並安裝依賴：
+複製 `.env.template` 成 `.env` 後填入：
+
+| 變數 | 用途 | 必要性 |
+|------|------|--------|
+| `DATABASE_URL` | Supabase Postgres 連線字串（建議用 transaction pooler，port 6543） | 必填 |
+| `SUPABASE_URL` | Supabase 專案 URL（OTP 登入） | 必填 |
+| `SUPABASE_ANON_KEY` | Supabase anon key（OTP 登入） | 必填 |
+| `SUPABASE_SERVICE_ROLE_KEY` | service role key（爬蟲寫入 / 建表 / storage） | 爬蟲與 setup 需要 |
+| `SUPABASE_STORAGE_BUCKET` | 圖片 bucket 名稱（目前未存圖片，可留空） | 選填 |
+| `JINA_API_KEY` | Jina embeddings 金鑰；留空則退回關鍵字比對 | 建議 |
+| `SECRET_KEY` | Flask session 密鑰（**正式環境請換成隨機值**） | 正式必填 |
+| `SMTP_HOST/PORT/USER/PASSWORD/SENDER` | email 通知；未設定則寫入 `mail.log` 不寄信 | 選填 |
+
+> 連線字串等憑證的取得位置見下方「部署到 Vercel」。`.env` 已被 gitignore，不會進版控。
+
+## 本機開發
 
 ```bash
-pip3 install --user -r requirements.txt
+# 1) 安裝相依套件（Poetry 為來源；沒有 Poetry 可改用 pip install -r requirements.txt）
+task install
+
+# 2) 建立資料表（只需做一次；idempotent）
+task setup-supabase
+
+# 3) 啟動網站
+task up      # = cleanup + serve，預設 http://127.0.0.1:8000
 ```
 
-最推薦直接用：
+其他：`task down`（停服務）、`task open`（開瀏覽器）。
+
+## 資料管線（爬蟲 → 媒合）
 
 ```bash
-cd /Users/felix/.openclaw/workspace/lostfound-website
-task up
+task crawl-lib        # 爬圖書館失物 → 寫入 Supabase lost_items（7 天 watermark、去重）
+task match-lostitems  # 對新招領物算 embedding，反向比對現有通報、必要時寄通知
 ```
 
-然後開：
+也可以交給 **GitHub Actions** 自動排程（避開 Supabase 排程被擋的問題）：
+`.github/workflows/scrape.yml` 每日跑「爬蟲 → 媒合」。需在 repo Secrets 設定
+`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`DATABASE_URL`、`SUPABASE_ANON_KEY`、
+`JINA_API_KEY`（以及選用的 `SMTP_*`）。
 
-```text
-http://127.0.0.1:8000
-```
+## 部署到 Vercel（主要部署方式）
 
-其他常用指令：
+整個 Flask app 透過 `api/index.py`（WSGI）跑在 Vercel 上，`vercel.json` 會把所有路徑
+導到它，Vercel 安裝 `requirements.txt`。
+
+1. 在 Vercel `Add New Project`，選這個 GitHub repo（Framework Preset 選 `Other`）。
+2. 在 Project → Settings → Environment Variables 填入上表變數
+   （至少 `DATABASE_URL`、`SUPABASE_URL`、`SUPABASE_ANON_KEY`、`JINA_API_KEY`、`SECRET_KEY`、`SMTP_*`）。
+3. 先建立資料表（擇一）：本機 `task setup-supabase`，或把 `supabase/schema.sql`
+   貼到 Supabase SQL Editor 執行。
+4. Deploy。
+
+注意事項：
+
+- `DATABASE_URL` 用 **transaction pooler**（serverless 友善，本專案已採用）。
+- serverless 檔案系統唯讀；沒設 SMTP 時若要寫 `mail.log`，用環境變數 `MAIL_LOG_PATH=/tmp/mail.log`。
+- 取得憑證：Supabase Dashboard →「Connect」拿 `DATABASE_URL`；Settings → API 拿
+  `anon` / `service_role`；資料庫密碼在 Settings → Database。
+
+### 自架（Vercel 以外）
+
+`Dockerfile` 提供容器化部署（Render / Railway / Fly.io / 本地）：
 
 ```bash
-task down
-task open
+docker build -t lostfound . && docker run -p 8000:8000 --env-file .env lostfound
 ```
 
-如果你不想用 `task`，也可以直接：
+## 媒合怎麼運作
 
-```bash
-pip3 install --user -r requirements.txt
-python3 app.py
-```
+- **語意**：把通報與招領物各自轉成向量，算 cosine 相似度（`錢` ≈ `現金`、`皮夾` ≈ `錢包`）。
+- **結構化**：再加上類型一致、地點相近、時間接近的加分。
+- **地點正規化**：`location_aliases.json` 把校內簡稱（`活大` → `第一學生活動中心`）展開後再比。
+- **降級**：未設 `JINA_API_KEY` 時退回關鍵字重疊比對，服務仍可運作。
 
-## Python 功能
+向量目前以 JSON 字串存在 text 欄位、在 Python 端算 cosine；資料量變大要改用
+pgvector 索引時見 `supabase/pgvector.sql`。
 
-目前這個 repo 已經用 `Flask` 實作：
-
-- `auth`
-- `register`
-- `發布遺失物`
-- session-based login state
-- SQLite 資料存放
-- 規則式媒合
-- 站內通知
-
-如果沒有設定 SMTP，信件內容會先寫到 `mail.log`。
-
-## GitHub Pages 注意事項
-
-GitHub Pages 只能部署靜態檔案，例如：
-
-- `index.html`
-- `styles.css`
-- `script.js`
-- 圖片與其他前端素材
-
-它不會執行 `app.py`，也不會啟動 `Flask` server、SQLite database、session 或任何 Python API。
-
-所以如果直接把這個 repo push 到 GitHub Pages，頁面雖然可以打開，但登入、註冊、送出遺失物等功能會出現 `Request failed`。原因是前端目前會呼叫：
-
-```text
-POST /api/login
-POST /api/register
-POST /api/lost-reports
-```
-
-本機開發時，這些 request 會送到正在執行的 Flask server：
-
-```text
-http://127.0.0.1:8000/api/login
-```
-
-但在 GitHub Pages 上，瀏覽器會改成打 GitHub Pages 的網址，例如：
-
-```text
-https://<username>.github.io/api/login
-```
-
-或 project site 底下的 Pages 網址。GitHub Pages 並沒有這些 API route，因此 request 會失敗。
-
-如果要讓 GitHub Pages 可以展示完整流程，有兩種做法：
-
-1. 改成純前端 demo mode：使用 `localStorage` 儲存假登入狀態與展示資料，不呼叫 Flask API。
-2. 保留真實後端：把 Flask API 另外部署到 Render / Railway / Fly.io，再把 `script.js` 的 API base URL 改成正式後端網址。
-
-目前完整功能請用本機方式執行：
-
-```bash
-cd /Users/felix/.openclaw/workspace/lostfound-website
-task up
-```
-
-然後開：
-
-```text
-http://127.0.0.1:8000
-```
-
-## 部署到 Vercel
-
-如果你們之後把前端部署到 Vercel，要注意：
-
-- 目前這份 repo 的 `Flask` backend 不會自動變成可用 API
-- Vercel 這邊比較適合放前端頁面
-- Python backend 比較適合另外部署到 Render / Railway / Fly.io
-
-目前只要把這個 repo push 到 GitHub，然後在 Vercel：
-
-1. `Add New Project`
-2. 選這個 GitHub repo
-3. Framework Preset 選 `Other`
-4. Build Command 留空
-5. Output Directory 留空
-6. 直接 deploy
-
-我已經補了：
-
-- [vercel.json](/Users/felix/.openclaw/workspace/lostfound-website/vercel.json)
-- [.vercelignore](/Users/felix/.openclaw/workspace/lostfound-website/.vercelignore)
-
-這樣前端靜態頁可以先上線，之後再把 `script.js` 裡的 API base URL 指向真正部署出去的 Python backend。
-
-## 團隊協作建議
-
-如果這個 repo 要和別人協作，合理的切法應該是：
-
-1. 這個 repo 保持前端畫面與 Flask backend 的整合開發版本
-2. 正式部署時，前端與 Python API 可以拆成不同服務
-3. 之後再把 ETL 擷取、SMTP、資料來源同步做成真正的 production pipeline
-
-這樣責任最清楚，也能維持產品演進時的模組邊界。
+實際的 HTTP 路由與資料結構見 [API_CONTRACT.md](API_CONTRACT.md)。

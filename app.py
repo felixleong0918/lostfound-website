@@ -19,7 +19,8 @@ import bridge
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
-MAIL_LOG = BASE_DIR / "mail.log"
+# Vercel 等 serverless 環境檔案系統唯讀，可用 MAIL_LOG_PATH 指到 /tmp（沒設定 SMTP 時才會用到）。
+MAIL_LOG = Path(os.environ.get("MAIL_LOG_PATH", str(BASE_DIR / "mail.log")))
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -121,7 +122,8 @@ def init_db() -> None:
             db.execute(statement)
         db.commit()
 
-init_db()
+# 注意：schema 由 `task setup-supabase`（scripts/setup_db.py）一次建立，
+# 不在 import 時自動執行 DDL —— 這樣 Vercel 每次 cold start 才不會多打一次資料庫。
 
 
 # --- Email ---
@@ -132,8 +134,11 @@ def send_email(recipient: str, subject: str, body: str) -> bool:
     smtp_password = os.environ.get("SMTP_PASSWORD")
     smtp_sender = os.environ.get("SMTP_SENDER", smtp_user or "noreply@ntu-lost-etl.local")
     if not smtp_host or not smtp_user or not smtp_password:
-        with MAIL_LOG.open("a", encoding="utf-8") as handle:
-            handle.write(f"[{now_iso()}] TO: {recipient}\nSUBJECT: {subject}\n{body}\n\n")
+        try:
+            with MAIL_LOG.open("a", encoding="utf-8") as handle:
+                handle.write(f"[{now_iso()}] TO: {recipient}\nSUBJECT: {subject}\n{body}\n\n")
+        except OSError:
+            app.logger.info("SMTP 未設定，且 mail.log 不可寫入；略過信件：%s", subject)
         return False
     message = EmailMessage()
     message["From"] = smtp_sender
