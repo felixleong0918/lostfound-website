@@ -17,12 +17,18 @@
 | GET | `/` | 否 | 儀表板（來源統計、近期媒合） |
 | GET | `/sources` | 否 | 招領物名單；query：`q`、`source`、`category` |
 | GET, POST | `/report` | 是 | 提報遺失物；POST 後立即媒合並導向 `/matches` |
+| GET, POST | `/report/<id>/edit` | 是 | 編輯通報（清掉舊媒合並重新比對） |
+| POST | `/report/<id>/resolve` | 是 | 標記為「已找到」（停止後續媒合） |
+| POST | `/report/<id>/reopen` | 是 | 重新開啟通報 |
+| POST | `/report/<id>/delete` | 是 | 刪除通報（連同其媒合） |
 | GET | `/matches` | 是 | 我的媒合結果 |
 | GET | `/notifications` | 是 | 我的通知 |
 | POST | `/notifications/read-all` | 是 | 全部標示為已讀 |
 
-提報表單欄位（`POST /report`）：`title`、`category`、`location`、
-`lost_at`（`YYYY-MM-DDTHH:MM`）、`description`，皆為必填。
+提報表單欄位（`POST /report`、`/report/<id>/edit`）：`title`、`category`（取自正規類別清單）、
+`location`、`lost_date_start`（`YYYY-MM-DD`，必填）、`lost_date_end`（`YYYY-MM-DD`，可留空＝單日）、
+`description`。`category` 與篩選共用 `category_rules.json` 定義的正規類別。
+只有 `status='open'` 的通報會參與媒合。
 
 未登入者在 `/sources`、`/` 只會看到非 facebook 來源的招領物。
 
@@ -35,8 +41,9 @@
 唯一鍵：`(source_system, original_id)`。
 
 ### `lost_reports`（使用者提報）
-`id` · `user_id`→`users.id` · `title` · `category` · `location` ·
-`lost_at`(ISO) · `description` · `embedding` · `created_at`
+`id` · `user_id`→`users.id` · `title` · `category`(正規類別) · `location` ·
+`lost_date_start`(YYYY-MM-DD) · `lost_date_end`(YYYY-MM-DD) ·
+`status`(`open`/`resolved`) · `description` · `embedding` · `created_at`
 
 ### `matches`
 `id` · `report_id`→`lost_reports.id` · `lost_item_id`→`lost_items.id` ·

@@ -38,6 +38,7 @@ lostfound-website/
 ├── matching.py             # 語意 + 結構化混合評分、地點簡稱正規化（純函式）
 ├── bridge.py               # 把 lost_items 列映射成 UI/媒合用的形狀
 ├── location_aliases.json   # 台大地點簡稱 → 正式名稱（可自行擴充）
+├── category_rules.json     # 物品類型正規化規則（正規類別 → 關鍵字，可自行擴充）
 ├── core/                   # SQLAlchemy 模型 + app factory（給設定 / 匯入腳本用）
 │   ├── __init__.py         #   create_app()（提供 DB context）
 │   ├── extensions.py       #   db = SQLAlchemy()
@@ -136,8 +137,12 @@ docker build -t lostfound . && docker run -p 8000:8000 --env-file .env lostfound
 ## 媒合怎麼運作
 
 - **語意**：把通報與招領物各自轉成向量，算 cosine 相似度（`錢` ≈ `現金`、`皮夾` ≈ `錢包`）。
-- **結構化**：再加上類型一致、地點相近、時間接近的加分。
+- **結構化**：再加上類型一致、地點相近、時間吻合的加分。
 - **地點正規化**：`location_aliases.json` 把校內簡稱（`活大` → `第一學生活動中心`）展開後再比。
+- **類型正規化**：各來源的雜亂類型（`其他 充電線`）與通報表單，都用 `category_rules.json`
+  收斂成同一組正規類別，類型篩選與加分才對得上。
+- **時間用區間**：通報以「遺失日期區間（最早～最晚，天精度）」比對拾獲日，符合使用者
+  記不清確切時間、且圖書館資料只有日期的實況；落在區間內加最多分，鄰近數天遞減。
 - **降級**：未設 `JINA_API_KEY` 時退回關鍵字重疊比對，服務仍可運作。
 
 向量目前以 JSON 字串存在 text 欄位、在 Python 端算 cosine；資料量變大要改用

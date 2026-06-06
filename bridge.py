@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import matching
+
 # source_system -> (顯示用來源名稱, 來源類型)
 # 來源類型沿用 external_items.source_type；facebook 類型在通報通知時會附原始連結。
 SOURCE_SYSTEM_MAP: dict[str, tuple[str, str]] = {
@@ -78,7 +80,9 @@ def lost_item_to_external(row: dict) -> dict:
     return {
         "source_ref": f"{source_system}:{row.get('original_id')}",
         "title": _title_from(row.get("description"), row.get("category")),
-        "category": (row.get("category") or "其他").strip(),
+        # 把來源端雜亂的類型字串收斂成一組正規類別，讓篩選與「類型一致」加分能對齊。
+        # 來源的 category 常常只有「其他」，真正的品名在 description，所以一起拿去分類。
+        "category": matching.canonical_category(f"{row.get('category') or ''} {row.get('description') or ''}"),
         "location": (row.get("location") or "").strip(),
         "found_at": parse_found_date(row.get("found_date")),
         "description": description,
