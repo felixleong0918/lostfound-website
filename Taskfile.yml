@@ -20,7 +20,12 @@ tasks:
     desc: Run the Python BeautifulSoup scraper locally and push to Supabase
     cmds:
       - python3 scripts/scrapers/supa_crawl_lib.py
-  
+
+  match-lostitems:
+    desc: Embed newly scraped lost_items and match them against existing reports
+    cmds:
+      - python3 scripts/match_lost_items.py
+
   cleanup:
     desc: Stop local server on the configured frontend port
     cmds:
