@@ -1,6 +1,26 @@
 version: '3'
 
 tasks:
+  install:
+    desc: Install project dependencies from requirements.txt
+    cmds:
+      - python3 -m pip install --user -r requirements.txt
+  
+  setup-supabase:
+    desc: Initialize Supabase tables
+    cmds:
+      - python3 scripts/setup_db.py
+      
+  init-lostitem:
+    desc: Initialize lost item table from pre-crawled csv file
+    cmds:
+      - python3 scripts/seed_from_csv.py
+      
+  crawl-lib:
+    desc: Run the Python BeautifulSoup scraper locally and push to Supabase
+    cmds:
+      - python3 scripts/scrapers/supa_crawl_lib.py
+  
   cleanup:
     desc: Stop local server on the configured frontend port
     cmds:
