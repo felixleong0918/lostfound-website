@@ -59,8 +59,8 @@ def fetch_and_push():
             break
 
         upload_batch = []
-        oldest_date_on_page = "2026/05/01"
-
+        # Track the minimum found_date seen on this page; start with a high sentinel value
+        oldest_date_on_page = "9999/12/31"
         for row in rows:
             cols = row.find_all('td')
             if len(cols) >= 6:
