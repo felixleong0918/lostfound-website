@@ -44,8 +44,7 @@ def fetch_and_push():
     while scan_active:
         print(f"Scraping page {page}...")
         params = {'q': 'viewer', 'page': page}
-        response = requests.get(TARGET_URL, params=params, headers=headers)
-        
+        response = requests.get(TARGET_URL, params=params, headers=headers, timeout=10)
         if response.status_code != 200:
             print(f"Failed to retrieve page {page}. Status: {response.status_code}")
             break
