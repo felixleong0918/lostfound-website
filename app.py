@@ -298,13 +298,63 @@ def _try_create_match(db, report, external, cos: float | None) -> bool:
     db.commit()
     return True
 
-def _notify_match(db, user, report, external) -> None:
-    subject = f"新的遺失物媒合結果：{report['title']}"
-    message = f"你的遺失通報「{report['title']}」出現新的可能配對：{external['title']}（來源：{external['source_name']}，地點：{external['location']}）。"
-    db.execute("INSERT INTO notifications (user_id, subject, message, delivery, created_at) VALUES (%s, %s, %s, 'email', %s)", (user["id"], subject, message, now_iso()))
+# 與 UI（app.html 通知紀錄標題）一致的提醒：媒合只是資訊比對，認領仍須回原單位。
+MATCH_DISCLAIMER = "提醒：本平台僅提供資訊媒合，實際認領請到原公告單位辦理流程。"
+
+
+def _match_line(external) -> str:
+    line = f"・{external['title']}（來源：{external['source_name']}，地點：{external['location']}）"
+    if external["source_type"] == "facebook":
+        line += f"\n  原始來源連結：{external['source_url']}"
+    return line
+
+
+def _build_match_email(pairs) -> tuple[str, str]:
+    """把同一使用者的多筆新配對 (report, external) 彙整成一封信的 (subject, body)。"""
+    # 依通報分組，同一份通報的多個招領物列在同一段落。
+    by_report: dict = {}
+    order: list = []
+    for report, external in pairs:
+        rid = report["id"]
+        if rid not in by_report:
+            by_report[rid] = (report, [])
+            order.append(rid)
+        by_report[rid][1].append(external)
+
+    if len(pairs) == 1:
+        subject = f"新的遺失物媒合結果：{pairs[0][0]['title']}"
+    else:
+        subject = f"新的遺失物媒合結果（共 {len(pairs)} 筆）"
+
+    sections = []
+    for rid in order:
+        report, externals = by_report[rid]
+        lines = [f"你的遺失通報「{report['title']}」出現以下可能配對："]
+        lines.extend(_match_line(ext) for ext in externals)
+        sections.append("\n".join(lines))
+    body = "\n\n".join(sections) + "\n\n" + MATCH_DISCLAIMER
+    return subject, body
+
+
+def _notify_user_matches(db, user, pairs) -> None:
+    """為單一使用者的所有新配對記錄站內通知，並寄出「一封」彙整信。
+
+    pairs：list[(report, external)]，皆屬於同一個 user。
+    """
+    if not pairs:
+        return
+    # 站內通知維持逐筆，方便使用者在列表逐項檢視。
+    for report, external in pairs:
+        message = f"你的遺失通報「{report['title']}」出現新的可能配對：{external['title']}（來源：{external['source_name']}，地點：{external['location']}）。"
+        subject = f"新的遺失物媒合結果：{report['title']}"
+        db.execute(
+            "INSERT INTO notifications (user_id, subject, message, delivery, created_at) VALUES (%s, %s, %s, 'email', %s)",
+            (user["id"], subject, message, now_iso()),
+        )
     db.commit()
-    extra = f"\n原始來源連結：{external['source_url']}" if external["source_type"] == "facebook" else ""
-    send_email(user["email"], subject, message + extra)
+    # Email 則彙整成一封，避免同時多筆配對時連發多封信。
+    subject, body = _build_match_email(pairs)
+    send_email(user["email"], subject, body)
 
 def run_matching(report_id: int) -> None:
     """新通報 → 比對所有招領物（lost_items），對新配對發出通知。"""
@@ -320,18 +370,25 @@ def run_matching(report_id: int) -> None:
                 cosine_by_item = _item_cosines(db, report_embedding)
             except Exception:
                 app.logger.exception("語意媒合失敗，改用關鍵字比對")
+        new_pairs = []
         for item_row in db.execute("SELECT * FROM lost_items").fetchall():
             external = _external_from_lost_item(item_row)
             cos = cosine_by_item.get(item_row["id"]) if cosine_by_item is not None else None
             if _try_create_match(db, report, external, cos):
-                _notify_match(db, user, report, external)
+                new_pairs.append((report, external))
+        # 同一份通報可能同時對上多筆招領物 → 彙整成一封信。
+        _notify_user_matches(db, user, new_pairs)
 
-def run_matching_for_lost_item(lost_item_id: int) -> int:
-    """單筆招領物 → 反向比對所有現有通報，必要時建立 match 並通知失主。回傳新配對數。"""
-    new_matches = 0
+def run_matching_for_lost_item(lost_item_id: int) -> list[tuple]:
+    """單筆招領物 → 反向比對所有現有通報，建立新 match。
+
+    回傳新配對的 (user, report, external) 清單；此處「不」寄信，交由呼叫端
+    （process_new_lost_items）跨多筆招領物依使用者彙整後再一次寄出，避免連發多封。
+    """
+    new_pairs: list[tuple] = []
     with closing(get_db()) as db:
         item_row = db.execute("SELECT * FROM lost_items WHERE id = %s", (lost_item_id,)).fetchone()
-        if not item_row: return 0
+        if not item_row: return []
         external = _external_from_lost_item(item_row)
         item_embedding = _ensure_item_embedding(db, item_row, external)
         # 只比對「進行中」的通報——已標記找到的不再媒合 / 通知。
@@ -343,9 +400,8 @@ def run_matching_for_lost_item(lost_item_id: int) -> int:
                     cos = matching.cosine(item_embedding, report_embedding)
             if _try_create_match(db, report, external, cos):
                 user = db.execute("SELECT * FROM users WHERE id = %s", (report["user_id"],)).fetchone()
-                _notify_match(db, user, report, external)
-                new_matches += 1
-    return new_matches
+                new_pairs.append((user, report, external))
+    return new_pairs
 
 def process_new_lost_items() -> dict:
     """處理「剛爬進來、還沒算過向量」的招領物：產生 embedding 並反向比對現有通報。
@@ -355,10 +411,20 @@ def process_new_lost_items() -> dict:
     """
     with closing(get_db()) as db:
         new_ids = [r["id"] for r in db.execute("SELECT id FROM lost_items WHERE embedding IS NULL OR embedding = '' ORDER BY id")]
-    total_matches = 0
+    # 先跨所有新招領物收集配對，再依使用者彙整 → 一個人一封信。
+    all_new: list[tuple] = []
     for lost_item_id in new_ids:
-        total_matches += run_matching_for_lost_item(lost_item_id)
-    return {"ok": True, "processed": len(new_ids), "new_matches": total_matches}
+        all_new.extend(run_matching_for_lost_item(lost_item_id))
+    if all_new:
+        with closing(get_db()) as db:
+            by_user: dict = {}
+            for user, report, external in all_new:
+                if user["id"] not in by_user:
+                    by_user[user["id"]] = (user, [])
+                by_user[user["id"]][1].append((report, external))
+            for user, pairs in by_user.values():
+                _notify_user_matches(db, user, pairs)
+    return {"ok": True, "processed": len(new_ids), "new_matches": len(all_new)}
 
 
 # --- Routes ---
