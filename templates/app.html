@@ -197,7 +197,7 @@
         <section class="panel">
           <div class="panel-head">
             <h3>{% if edit_report %}編輯遺失通報{% else %}提報我遺失的物品{% endif %}</h3>
-            <span>填寫越完整，越容易比對到相近招領物。</span>
+            <span>填寫越完整，越容易比對到相近招領物。你提供的資料僅作為系統媒合用途，其他使用者將無法查看。</span>
           </div>
           <form action="{% if edit_report %}{{ url_for('edit_report', rid=edit_report.id) }}{% else %}{{ url_for('report') }}{% endif %}" method="POST" class="form-grid">
             <label><span>物品名稱</span><input name="title" type="text" placeholder="例如：黑色 AirPods Pro" value="{{ edit_report.title if edit_report else '' }}" required /></label>
@@ -283,7 +283,7 @@
     <section class="view active">
       <section class="panel">
         <div class="panel-head">
-          <h3>通知紀錄</h3>
+          <h3>通知紀錄（本平台僅提供資訊媒合，實際認領請到原公告單位辦理流程）</h3>
           <form action="{{ url_for('read_all_notifications') }}" method="POST">
             <button type="submit" class="ghost-btn">全部標記已讀</button>
           </form>
