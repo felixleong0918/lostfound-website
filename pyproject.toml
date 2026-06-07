@@ -20,6 +20,7 @@ packages = [{ include = "core" }]
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.0"
 pandas = "^2.2.0"
+selenium = "^4.33.0"
 
 [tool.pytest.ini_options]
 addopts = "-m 'not ui'"

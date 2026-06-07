@@ -71,3 +71,28 @@ tasks:
       PORT="{{default "8000" .PORT}}"
       HOST="{{default "127.0.0.1" .HOST}}"
       open "http://$HOST:$PORT"
+
+  test:
+    desc: Run unit and integration tests
+    cmds:
+      - poetry run pytest
+
+  test-unit:
+    desc: Run unit tests only
+    cmds:
+      - poetry run pytest -m unit
+
+  test-integration:
+    desc: Run Flask integration tests only
+    cmds:
+      - poetry run pytest -m integration
+
+  test-e2e:
+    desc: Run headless Chrome end-to-end tests
+    cmds:
+      - poetry run pytest -o addopts="" -m ui
+
+  test-all:
+    desc: Run unit, integration, and end-to-end tests
+    cmds:
+      - poetry run pytest -o addopts=""
